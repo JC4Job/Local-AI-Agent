@@ -11,6 +11,14 @@
 #include <filesystem>
 #include <string>
 
+/*
+    In the future i will add preprocessor identification of the environment, this will be more precise, but for now i just tested on Windows
+    I used some security checking for CLI that comes from windows and linux, becaue some programs calls was 
+    standard on UNX based systems and where imported in MSPS.
+    So the standard of the DOS commands does not always applyed for the right enviorement
+*/
+
+
 // The running executable agent.exe.
 inline std::filesystem::path Sys_EXEPath() {
     wchar_t buffer[MAX_PATH * 4];
