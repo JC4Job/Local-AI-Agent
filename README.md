@@ -106,7 +106,7 @@ num_ctx = 16384
 num_predict = 4096
 ```
 
-**The checked-in configuration points to `http://172.10.0.58:11434/api/chat`.** Replace it unless that is your intended server. The endpoint must include `/api/chat`; the client derives `/api/embed` and `/api/tags` from the same server.
+**The checked-in configuration points to `http://hostname:port/api/chat`.** Replace it unless that is your intended server. The endpoint must include `/api/chat`; the client derives `/api/embed` and `/api/tags` from the same server.
 
 If `config/machines/<computer-name>.txt` already exists, its values override `settings.txt`. See [configuration precedence](#configuration-precedence).
 
@@ -357,7 +357,7 @@ These are the **committed `settings.txt` values**, before any overrides:
 | --- | --- | --- |
 | `agent_name` | `Sof_IA` | Default display name. |
 | `model` | `llama3.1:8b` | Chat model. Built-in/recovery default is `llama3.2`. |
-| `endpoint` | `http://172.10.0.58:11434/api/chat` | Ollama chat URL. Built-in/recovery default uses `127.0.0.1`. |
+| `endpoint` | `http://127.0.0.1:11434/api/chat` | Ollama chat URL. Built-in/recovery default uses `127.0.0.1`. |
 | `embed_model` | `bge-m3` | Embedding model; leave empty for keyword-only retrieval. |
 | `embed_num_ctx` | `1024` | Embedding context window. |
 | `num_ctx` | `16384` | Total chat context window. |
