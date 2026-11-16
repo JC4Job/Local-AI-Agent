@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 # The agent's settings, read as the agent reads them: config\settings.txt, then this computer's
 # config\machines\<computer name>.txt over it (the Settings window of agent_gui.exe writes it).
 # These defaults match src/agent/AgentConfig.hpp, for keys both files leave out.
+# The model itself are not the best one for now still trying to find the less hardware configuration for maximum return.
 $settings = @{
     model = 'llama3.2'; embed_model = 'bge-m3'; endpoint = 'http://127.0.0.1:11434/api/chat'
     num_ctx = '16384'; num_predict = '4096'; embed_num_ctx = '1024'
@@ -68,7 +69,6 @@ if ($missing) {
 foreach ($m in $models) {
     Write-Host "loading $($m.Name)"
     $body = @{ model = $m.Name; keep_alive = $KeepAlive; options = $m.Options }
-    # An empty chat only loads the model; /api/embed needs some input.
     if ($m.Api -eq 'chat') { $body.messages = @() } else { $body.input = @('warm-up') }
     $timer = [Diagnostics.Stopwatch]::StartNew()
     try {
