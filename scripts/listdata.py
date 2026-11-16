@@ -1,9 +1,10 @@
-"""Search the local knowledge base: the JSON files reader.py writes to the knowledge folder.
-
-Usage:
-    python listdata.py                 list the documents in the knowledge base
-    python listdata.py <keywords...>   print the passages that best match the keywords
-"""
+#My first intend was use this as context for the model, but the lack of enougth param's make harder with this approach
+#Search the local knowledge base: the JSON files reader.py writes to the knowledge folder.
+#
+#Usage:
+#    python listdata.py                 list the documents in the knowledge base
+#    python listdata.py <keywords...>   print the passages that best match the keywords
+#
 import json
 import re
 import sys
@@ -64,7 +65,6 @@ def list_documents(documents):
 
 
 def search(documents, keywords):
-    # Score each window of lines by how many distinct keywords it contains.
     candidates = []
     for doc_index, (_, lines) in enumerate(documents):
         normalized = [normalize(line) for line in lines]
@@ -79,7 +79,6 @@ def search(documents, keywords):
     for _, doc_index, i in candidates:
         if len(picked) >= MAX_PASSAGES:
             break
-        # Skip windows that overlap a passage already chosen.
         if any(d == doc_index and abs(j - i) <= 2 * CONTEXT_LINES for d, j in picked):
             continue
         picked.append((doc_index, i))
