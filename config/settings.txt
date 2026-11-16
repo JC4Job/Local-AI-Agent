@@ -14,8 +14,7 @@ agent_name = Sof_IA
 # The chat model needs Ollama's 'tools' capability (check with: ollama show <model>).
 # Be carefull about the models some of them are too short for this model.
 model = llama3.1:8b
-#endpoint = http://127.0.0.1:11434/api/chat
-endpoint = http://172.10.0.58:11434/api/chat
+endpoint = http://127.0.0.1:11434/api/chat
 
 # Embedding model for search by meaning; leave empty for keyword search only.
 embed_model = bge-m3
