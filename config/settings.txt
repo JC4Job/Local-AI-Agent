@@ -1,0 +1,90 @@
+# Agent settings, read when agent.exe / agent_gui.exe starts: after a change, restart the program.
+# No rebuild needed. run.ps1 reads this file too, so the models it preloads match.
+#
+# Format: one "key = value" per line. Lines starting with # are comments (only whole lines, not after a value).
+#
+# which the Settings window of agent_gui.exe writes. restore_config.exe writes the defaults back.
+# Some Harness are inserted on compile time, so it has boundaries.
+# The main its to search mostlly into the \data.
+# WARNING
+# Be carefull on running into the agents mode it can be really hard depending on the machine that you are running.
+# The Name was created as the same of my daughter.
+agent_name = Sof_IA
+# --- Models (all local, in Ollama) ---
+# The chat model needs Ollama's 'tools' capability (check with: ollama show <model>).
+# Be carefull about the models some of them are too short for this model.
+model = llama3.1:8b
+#endpoint = http://127.0.0.1:11434/api/chat
+endpoint = http://172.10.0.58:11434/api/chat
+
+# Embedding model for search by meaning; leave empty for keyword search only.
+embed_model = bge-m3
+embed_num_ctx = 1024
+
+# --- Size of the conversation and of the replies, in tokens (about 3/4 of a word each) ---
+# num_ctx: the context window, shared by the system prompt, tools, conversation, search results and reply.
+# Bigger keeps more of the conversation, but uses more memory and takes longer to read on a slow machine.
+num_ctx = 16384
+# num_predict: the longest reply. Kept free: older search results are shortened to leave this much room.
+num_predict = 4096
+
+# --- Tools ---
+# Rounds of tool calls per question before the model must answer with what it has.
+max_tool_rounds = 5
+# Longest run of execute_code and of the search scripts, in milliseconds.
+code_timeout_ms = 10000
+
+# --- Autonomous mode (agent.exe --auto "goal", or Run task in the window) ---
+# Most steps one goal may take. Each step is up to max_tool_rounds rounds of tool calls and a note; on a
+# slow machine a step takes about a minute.
+autonomous_max_steps = 10
+# Instructions added to the system prompt in this mode.
+autonomous_prompt_file = autonomous_prompt.txt
+
+# --- Folders and files ---
+scripts_dir = ..\scripts
+knowledge_dir = ..\data\knowledge
+rag_index = ..\data\rag\knowledge.idx
+# What one knowledge base search may put in the context.
+kb_max_passages = 6
+kb_max_result_chars = 4000
+
+# --- Files and code ---
+# Where write_file puts a file given without a full path, and the folder execute_code runs in, so the
+# files a script makes land there too. Writing a file anywhere else asks you first.
+workspace_dir = ..\workspace
+# A message with a word from each of these two lists asks to create, save or run a file ("create a python
+# script in C:\tools", "crie um arquivo"): the searches are left out for it (in a task, for the whole run),
+# so the model goes straight to write_file and execute_code instead of searching first. Leave a list empty
+# to turn this off.
+file_task_actions = create, write, save, make, generate, edit, run, execute, crie, criar, cria, escreva, escrever, salve, salvar, gere, gerar, faça, fazer, edite, editar, rode, rodar, executar
+file_task_objects = file, files, script, scripts, folder, directory, program, py, ps1, bat, cmd, txt, csv, json, arquivo, arquivos, pasta, diretório, diretorio, programa
+# ...unless the message also has one of these words, or asks for the internet: then the searches stay.
+search_words = search, knowledge, pesquise, pesquisar, pesquisa, busque, buscar, procure, procurar, conhecimento
+
+# --- Text the model reads ---
+# The directives: which tool for which request and how to answer. Factory copies in defaults\.
+system_prompt_file = system_prompt.txt
+
+# A message containing one of these words asks for the internet, which is then searched before the knowledge base.
+internet_words = internet, online, wikipedia, google
+# "web" counts only after one of these words ("the web", "na web"), so "web app" does not trigger it.
+words_before_web = the, on, na, da, pela
+
+# --- Internet search (search_internet: scripts\websearch.py) ---
+# Sources tried in this order until one has results: duckduckgo, bing (the whole web), wikipedia. None
+# needs a key. A search engine can refuse automated searches at any time; the next one is then used.
+web_sources = duckduckgo, bing, wikipedia
+# Top results whose pages are read for the text about the query (0: only the search engine's snippets).
+# Reading takes what is left of code_timeout_ms after the search.
+web_pages_to_read = 3
+# Most characters one internet search may put in the context.
+web_max_result_chars = 6000
+
+# Tool descriptions (one line each).
+tool_write_file = Creates or replaces a text file with the content given, creating its folders, and returns its full path. Use it to create or save a script, a program, a text or any other file. It does not run anything. A path without a folder puts the file in the workspace folder. Writing outside the workspace folder, or a script with code that could do harm, happens only if the user allows it.
+tool_execute_code = Runs code or a command on the local Windows machine now and returns its exit code, stdout and stderr. It does not save the code: to create a file, use write_file. To run a saved file, give the command that runs it, such as: python hello.py. Languages: python, powershell, cmd. It runs in the workspace folder. Limits: 10 s, 512 MB, no stdin, output capped at 16 KB per stream. Code that deletes or writes files, installs software, changes settings or uses the network runs only if the user allows it.
+tool_search_knowledge_base = Searches all the documents the user saved and returns the few passages that best match, each with its document name and page. Use it for questions about facts, people, events or the user's documents, before search_internet unless the user asked for the internet. Not for creating or running files, and not for greetings or small talk.
+tool_search_internet = Searches the web and returns the best results: title, address, date when known, and the text of the top pages that is about the query. Pages can be old: check the date before calling a value current. Call it directly when the user asks to search the internet, the web, online or Wikipedia; otherwise only after search_knowledge_base found nothing on the subject. Not for creating or running files.
+# Autonomous mode only.
+tool_finish = Ends the task. Call it once, when the goal is done or cannot be done. The summary is all the user reads: put the result itself in it and what was done.
