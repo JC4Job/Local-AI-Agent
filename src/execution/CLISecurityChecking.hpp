@@ -55,6 +55,9 @@ public:
             given with the report is then the file's content.
         */
         std::string          file;
+        
+        // With `file`: the agent wants to delete that file (delete_file).
+        bool                 deletes = false;
 
         bool Flagged() const { return !findings.empty(); }
 
@@ -99,7 +102,8 @@ public:
 
     /*
         Asks the user whether flagged code may run, or, when `report.file` is set, whether that file may be written
-        with `code` as its content; true goes ahead. Called on the thread that runs the agent, which waits for the
+        with `code` as its content (deleted, when `report.deletes` is set); true goes ahead. 
+        Called on the thread that runs the agent, which waits for the
         answer.
     */
     using ConfirmHandler = std::function<bool(const std::string& language, const std::string& code, const Report& report)>;

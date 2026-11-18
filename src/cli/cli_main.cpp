@@ -42,31 +42,39 @@ BOOL WINAPI OnCtrlC(DWORD type) {
 }
 
 /*
-    The console's ConfirmHandler: shows the flagged code (or the file the agent wants to write, and its content)
-    and why, and goes ahead only on "yes" (or y, sim, s). Anything else, an empty line or Ctrl+C refuses. Input
-    piped in cannot answer: the code is not run, the file not written.
+    The console's ConfirmHandler: shows the flagged code (or the file the agent wants to write, and its content,
+    or to delete) and why, and goes ahead only on "yes" (or y, sim, s). Anything else, an empty line or Ctrl+C
+    refuses. 
+    Input piped in cannot answer: the code is not run, the file not written nor deleted.
+    Added a new function that can delete files.
 */
 bool ConfirmAtConsole(const std::string& language, const std::string& code, const CLISecurityChecking::Report& report) {
     const std::string rule(72, '=');
-    const bool        file = !report.file.empty();
+    const bool        file    = !report.file.empty();
+    const bool        deletes = file && report.deletes;
     std::string       head;
     if (file) {
-        head = std::string(report.AnyDanger() ? "!! " : "") + "The agent wants to write the file " + report.file +
+        head = std::string(report.AnyDanger() ? "!! " : "") + "The agent wants to " +
+               (deletes ? "delete" : "write") + " the file " + report.file +
                (report.AnyDanger() ? ", which could HARM this computer.\n" : ".\n");
     } else {
         head = report.AnyDanger() ? "!! The agent wants to run " + language + " code that could HARM this computer.\n"
                                   : "The agent wants to run " + language + " code that changes this computer.\n";
     }
-    std::string text = "\n" + rule + "\n" + head + "\nWhy it was flagged:\n" + report.Describe() +
-                       (file ? "\nThe file's content:\n" : "\nThe code:\n") + code +
-                       (code.empty() || code.back() == '\n' ? "" : "\n") + rule + "\n";
+    std::string text = "\n" + rule + "\n" + head + "\nWhy it was flagged:\n" + report.Describe();
+    if (!deletes) {
+        text += (file ? "\nThe file's content:\n" : "\nThe code:\n") + code +
+                (code.empty() || code.back() == '\n' ? "" : "\n");
+    }
+    text += rule + "\n";
     if (!CLIHelper::StdinIsConsole()) {
         TextUtilities::print(text + "No console to answer at (the input is piped in): " +
-                             (file ? "not written.\n" : "not run.\n"));
+                             (deletes ? "not deleted.\n" : file ? "not written.\n" : "not run.\n"));
         return false;
     }
-    TextUtilities::print(text + (file ? "Write it? Type yes to write it, anything else to refuse: "
-                                      : "Run it? Type yes to run it, anything else to refuse: "));
+    TextUtilities::print(text + (deletes ? "Delete it? Type yes to delete it, anything else to refuse: "
+                                 : file  ? "Write it? Type yes to write it, anything else to refuse: "
+                                         : "Run it? Type yes to run it, anything else to refuse: "));
 
     std::string answer;
     if (!std::getline(std::cin, answer)) {

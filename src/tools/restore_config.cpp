@@ -1,25 +1,17 @@
 /*
-    I Created this for tests of the configuration of the model, in my first approach i put the harndess here 
-    and was a disaster so split the logic into some files, the main point its this.
-
-    This restore the configuration for a stable pattern, but not the best tuning.
-    
     restore_config.exe: puts the agent's configuration back to the defaults built into the program, for when it
     is broken (a bad value, a deleted line, a prompt edited into nonsense).
 
     It writes config\settings.txt with the defaults in src/agent/AgentConfig.hpp, config\system_prompt.txt and
     config\autonomous_prompt.txt from their factory copies in config\defaults\ (the short prompts built into the
     program if a copy is missing), and removes this computer's own settings, config\machines\<computer name>.txt,
-    so its values come from settings.txt again. 
-    
-    Nothing is lost: every file it replaces or removes is copied first to config\backup\<date and time>\. 
-    
-    Other computers' files in config\machines\ are left alone, and so are the agents made in the window 
-    (config\agents\), the knowledge base and its index.
+    so its values come from settings.txt again. Nothing is lost: every file it replaces or removes is copied first
+    to config\backup\<date and time>\. Other computers' files in config\machines\ are left alone, and so are the
+    agents made in the window (config\agents\), the knowledge base and its index.
 
     Usage: restore_config.exe          shows what it will do and asks first
            restore_config.exe --yes    does it without asking (for scripts)
-    Exit code: 0 when the defaults were written, 1 when nothing was changed or it failed, 2 for a wrong option.  
+    Exit code: 0 when the defaults were written, 1 when nothing was changed or it failed, 2 for a wrong option.
 */
 
 #include <algorithm>
@@ -159,7 +151,7 @@ int main(int argc, char* argv[]) {
     }
 
     const int code = Restore(ask);
-    // Started from Explorer, the window would close before the result could be read. -- Blink effect    
+    // Started from Explorer, the window would close before the result could be read.
     if (Sys_OwnsConsole()) {
         TextUtilities::print("\nPress Enter to close.");
         std::string line;

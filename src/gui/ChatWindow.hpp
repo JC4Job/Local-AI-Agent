@@ -296,12 +296,13 @@ private:
         }
 
         const bool   danger = confirm_.report.AnyDanger();
-        const bool   file   = !confirm_.report.file.empty();  // write_file: the "code" is the file's content
-        const ImVec4 dim    = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+        const bool   file    = !confirm_.report.file.empty();  // write_file: the "code" is the file's content
+        const bool   deletes = file && confirm_.report.deletes;  // delete_file: no content
+        const ImVec4 dim     = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
         std::string  head;
         if (file) {
-            head = "The agent " + confirm_name_ + " wants to write the file " + confirm_.report.file +
-                   (danger ? ", which could HARM this computer." : ".");
+            head = "The agent " + confirm_name_ + " wants to " + (deletes ? "delete" : "write") + " the file " +
+                   confirm_.report.file + (danger ? ", which could HARM this computer." : ".");
         } else {
             head = danger ? "The agent " + confirm_name_ + " wants to run " + confirm_.language +
                                 " code that could HARM this computer."
@@ -332,20 +333,22 @@ private:
         }
         ImGui::Spacing();
 
-        ImGui::TextUnformatted(file ? "The file's content:" : "The code:");
-        const float line = ImGui::GetTextLineHeight();
-        ImGui::InputTextMultiline("##code", &confirm_.code, ImVec2(-FLT_MIN, line * 12.0f), ImGuiInputTextFlags_ReadOnly);
-        ImGui::Spacing();
+        if (!deletes) {
+            ImGui::TextUnformatted(file ? "The file's content:" : "The code:");
+            const float line = ImGui::GetTextLineHeight();
+            ImGui::InputTextMultiline("##code", &confirm_.code, ImVec2(-FLT_MIN, line * 12.0f), ImGuiInputTextFlags_ReadOnly);
+            ImGui::Spacing();
+        }
 
         bool answered = false;
         bool allow    = false;
-        if (ImGui::Button(file ? "Don't write" : "Don't run")) {
+        if (ImGui::Button(deletes ? "Don't delete" : file ? "Don't write" : "Don't run")) {
             answered = true;
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, danger ? ImVec4(0.55f, 0.15f, 0.15f, 1.0f) : ImVec4(0.45f, 0.35f, 0.10f, 1.0f));
-        if (ImGui::Button(file ? "Write it" : "Run it")) {
+        if (ImGui::Button(deletes ? "Delete it" : file ? "Write it" : "Run it")) {
             answered = true;
             allow    = true;
         }

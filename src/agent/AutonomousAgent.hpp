@@ -43,8 +43,10 @@
     The instructions added to the system prompt are in config\autonomous_prompt.txt; the step limit
     (autonomous_max_steps) and finish's description (tool_finish) are in config\settings.txt.
     execute_code runs with the limits it has in a chat (code_timeout_ms, 512 MB), but nobody reads the code
-    before it runs. A goal that asks to create or run a file gets no search tools for the whole run
-    (ChatAgent::AsksForFile), so the model does not search the knowledge base and the internet before writing.
+    before it runs. A goal that asks to create, change, delete or run a file gets no search tools for the whole
+    run (ChatAgent::FindFileTask), so the model does not search the knowledge base and the internet before writing.
+    One that asks to delete keeps write_file from emptying a file in place of deleting it, which a small model
+    does and then reports the file deleted; delete_file deletes it, after the user allows it.
 */
 class AutonomousAgent {
 public:

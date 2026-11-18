@@ -171,9 +171,15 @@ public:
         internet_searched_  = false;
         internet_requested_ = false;
         task_log_.clear();
-        if (AsksForFile(prompt)) {
-            Report("[The message asks to create or run a file: the searches are left out, so the model goes "
-                   "straight to write_file and execute_code]");
+        const FileTask file = FindFileTask(prompt);
+        delete_task_ = file.deletes;
+        if (file.Found()) {
+            // The words found, so a message taken for a file task by mistake shows why.
+            Report("[File task (\"" + file.action + "\", \"" + file.object + "\"): the searches are left out, so "
+                   "the model goes straight to the file tools" +
+                   (file.deletes ? std::string(". It asks to delete: delete_file, and write_file may not empty a "
+                                               "file instead]")
+                                 : std::string("]")));
             harness_.SetHiddenTools({"search_knowledge_base", "search_internet"});
         } else {
             harness_.SetHiddenTools({});
@@ -186,7 +192,7 @@ public:
         carries over from the task's earlier messages instead of starting again: once the knowledge base has been
         searched, search_internet runs at once, and a request for the internet stays in force even when the message
         does not repeat it (a long goal is not restated in every step). So does a file task: the searches stay out
-        for the whole run, and so does TaskLog().
+        for the whole run, and so do a request to delete (see WriteFile) and TaskLog().
         `only_tools`: offer only these tools for this message, with at most 2 rounds of tool calls: a short
         question, not a step of work (AutonomousAgent asks with finish alone whether the goal is done). Empty: the
         usual tools and rounds.
@@ -302,6 +308,8 @@ private:
     */
     bool                  internet_requested_ = false;
     bool                  internet_searched_ = false;
+    // The prompt (or task) asks to delete a file (file_delete_actions): write_file does not empty one; see WriteFile.
+    bool                  delete_task_ = false;
     // Full search results for the whole conversation (the context keeps only previews of old ones).
     ToolResultCache       search_cache_;
     // Searches already answered for the current prompt, by cache key.
@@ -481,27 +489,57 @@ private:
         return false;
     }
 
+    // What FindFileTask found in a message.
+    struct FileTask {
+        std::string action;           // the word of file_task_actions that makes it a file task ("apague")
+        std::string object;           // and the word of file_task_objects ("arquivo", "py")
+        bool        deletes = false;  // it has a word of file_delete_actions, file task or not
+
+        bool Found() const { return !action.empty(); }
+    };
+
     /*
-        True when the message asks to create, save or run a file: it has a word of file_task_actions and one of
-        file_task_objects ("create a python script", "crie um arquivo.txt"), and it does not ask for a search too
-        (the internet, or a word of search_words). Plain word matching, as AsksForInternet; the lists are in
-        config\settings.txt.
+        Whether the message asks to create, change, delete or run a file: it has a word of file_task_actions and
+        one of file_task_objects ("create a python script", "apague o arquivo velho.txt"), and it does not ask for
+        a search too (the internet, or a word of search_words). Apart from that, whether it asks to delete
+        (file_delete_actions). Plain word matching, as AsksForInternet; the lists are in config\settings.txt.
     */
-    bool AsksForFile(const std::string& prompt) const {
+    FileTask FindFileTask(const std::string& prompt) const {
         const std::vector<std::string> words = Words(prompt);
-        const auto any = [&words](const std::vector<std::string>& list) {
-            return std::any_of(words.begin(), words.end(), [&list](const std::string& w) { return Listed(list, w); });
-        };
-        return any(config_.file_task_actions) && any(config_.file_task_objects) && !any(config_.search_words) &&
-               !AsksForInternet(prompt);
+        FileTask task;
+        task.deletes = !FirstListed(words, config_.file_delete_actions).empty();
+        if (!FirstListed(words, config_.search_words).empty() || AsksForInternet(prompt)) {
+            return task;
+        }
+        const std::string action = FirstListed(words, config_.file_task_actions);
+        const std::string object = FirstListed(words, config_.file_task_objects);
+        if (!action.empty() && !object.empty()) {
+            task.action = action;
+            task.object = object;
+        }
+        return task;
     }
 
-    // The words of `text`, ASCII letters lowered: "Crie hello.py!" -> {"crie", "hello", "py"}.
+    // The first of `words` that is in `list`; empty when none is.
+    static std::string FirstListed(const std::vector<std::string>& words, const std::vector<std::string>& list) {
+        for (const std::string& word : words) {
+            if (Listed(list, word)) {
+                return word;
+            }
+        }
+        return {};
+    }
+
+    /*
+        The words of `text`, ASCII letters lowered: "Crie hello.py!" -> {"crie", "hello", "py"}. An underscore
+        stays in its word, so a file name is not read as words of the lists: edit_arquivo.py gives "edit_arquivo"
+        and "py", not "edit" (an action) and "arquivo".
+    */
     static std::vector<std::string> Words(const std::string& text) {
         std::vector<std::string> words;
         std::string word;
         for (unsigned char c : text) {
-            if (std::isalnum(c) || c >= 0x80) {
+            if (std::isalnum(c) || c == '_' || c >= 0x80) {
                 word += static_cast<char>(std::tolower(c));
             } else if (!word.empty()) {
                 words.push_back(word);
@@ -655,18 +693,13 @@ private:
             return "Error: no content given. Call write_file again with the whole text of the file in content.";
         }
 
-        fs::path path = fs::u8path(given);
-        // "C:file.py" and "\file.py" depend on the current drive or folder: neither full nor in the workspace.
-        if (path.has_root_name() != path.has_root_directory()) {
-            return "Error: \"" + given + "\" is not a full path (C:\\folder\\file.py) nor a name in the workspace "
-                   "folder (file.py). Call write_file again with one of those.";
+        std::string    bad_path;
+        const fs::path path = ToolPath(given, "write_file", bad_path);
+        if (path.empty()) {
+            return bad_path;
         }
-        const fs::path workspace = fs::u8path(config_.workspace_dir);
-        if (path.is_relative()) {
-            path = workspace / path;
-        }
-        path = path.lexically_normal();
-        const std::string shown = path.u8string();
+        const fs::path    workspace = fs::u8path(config_.workspace_dir);
+        const std::string shown     = path.u8string();
         std::error_code ec;
         if (!path.has_filename() || fs::is_directory(path, ec)) {
             return "Error: " + shown + " is a folder. Call write_file again with the path of a file in it, its "
@@ -674,6 +707,16 @@ private:
         }
         const bool replaces = fs::exists(path, ec);
         NoteAction("write_file|" + Lower(shown) + "|" + content->get<std::string>());
+
+        /*
+            Asked to delete a file, a small model writes it with no content, which only empties it, and then says
+            it is gone. After NoteAction, so the same call again counts as a repeat (AutonomousAgent stops on those).
+        */
+        if (replaces && delete_task_ && TrimSpace(content->get<std::string>()).empty()) {
+            Report("[write_file with no content on " + shown + ", in a message that asks to delete: not written]");
+            return "Not written: write_file does not delete files. With no content it would only empty " + shown +
+                   ", and the file would still be there. To delete it, call delete_file with path: " + given;
+        }
 
         CLISecurityChecking::Report report;
         report.file = shown;
@@ -751,6 +794,93 @@ private:
             result += " If the user asked to run it, call execute_code with language cmd and code: " + run;
         }
         return result;
+    }
+
+    /*
+        The full path a file tool (`tool`: write_file, delete_file) names: a path without a drive is in the
+        workspace folder. Empty, with `error` for the model, when it is neither full nor a name in the workspace:
+        "C:file.py" and "\file.py" depend on the current drive or folder.
+    */
+    std::filesystem::path ToolPath(const std::string& given, const char* tool, std::string& error) const {
+        namespace fs = std::filesystem;
+        fs::path path = fs::u8path(given);
+        if (path.has_root_name() != path.has_root_directory()) {
+            error = "Error: \"" + given + "\" is not a full path (C:\\folder\\file.py) nor a name in the workspace "
+                    "folder (file.py). Call " + tool + " again with one of those.";
+            return {};
+        }
+        if (path.is_relative()) {
+            path = fs::u8path(config_.workspace_dir) / path;
+        }
+        return path.lexically_normal();
+    }
+
+    /*
+        The delete_file tool: deletes the file at `path`, or an empty folder. A path without a drive is in the
+        workspace folder. Without it, a model asked to delete a file wrote it with no content (see WriteFile).
+        The user is always asked first, in the workspace too: a deleted file does not come back, and execute_code
+        asks before a del as well. A folder with files in it is not deleted: a whole tree is for the user to delete.
+    */
+    std::string RemoveFile(const json& args) {  // not DeleteFile: windows.h makes that DeleteFileW
+        namespace fs = std::filesystem;
+        const std::string given = StringArg(args, "path");
+        if (given.empty()) {
+            return "Error: no path given. Call delete_file again with the file's path and name in path.";
+        }
+        std::string    error;
+        const fs::path path = ToolPath(given, "delete_file", error);
+        if (path.empty()) {
+            return error;
+        }
+        const fs::path    workspace = fs::u8path(config_.workspace_dir);
+        const std::string shown     = path.u8string();
+        NoteAction("delete_file|" + Lower(shown));
+
+        std::error_code       ec;
+        const fs::file_status status = fs::symlink_status(path, ec);
+        if (!fs::exists(status)) {
+            return "Nothing deleted: " + shown + " does not exist. Check the name the user gave; if you deleted it "
+                   "earlier, that is done.";
+        }
+        const bool folder = fs::is_directory(status);
+        if (folder && !fs::is_empty(path, ec)) {
+            return "Not deleted: " + shown + " is a folder with files in it, and delete_file deletes one file or an "
+                   "empty folder. Tell the user, and go on without it.";
+        }
+
+        CLISecurityChecking::Report report;
+        report.file    = shown;
+        report.deletes = true;
+        if (InSystemFolder(path)) {
+            report.findings.push_back({CLISecurityChecking::Severity::Danger, "Windows",
+                                       "deletes from Windows or the installed programs", 0, shown, {}});
+        } else if (!IsInside(path, workspace)) {
+            report.findings.push_back({CLISecurityChecking::Severity::Caution, "Any",
+                                       folder ? "deletes a folder outside the workspace folder"
+                                              : "deletes a file outside the workspace folder",
+                                       0, "the workspace folder is " + workspace.u8string(), {}});
+        } else {
+            report.findings.push_back({CLISecurityChecking::Severity::Caution, "Any",
+                                       folder ? "deletes a folder" : "deletes a file", 0, shown, {}});
+        }
+        Report("[delete_file " + shown + ": " + report.Harms() + ". Asking the user]");
+        if (!confirm_ || !confirm_("text", std::string(), report)) {
+            Report("[Not deleted: the user did not allow it]");
+            task_log_.push_back("not allowed to delete " + shown);
+            return "Not deleted: the user did not allow deleting " + shown + ". Do not try to delete it in another "
+                   "way. Tell the user, and go on without it.";
+        }
+        Report("[Allowed by the user]");
+
+        fs::remove(path, ec);
+        std::error_code gone;
+        if (ec || fs::exists(fs::symlink_status(path, gone))) {
+            return "Error: could not delete " + shown + " (in use by another program, or no permission)" +
+                   (ec ? ": " + ec.message() : std::string()) + ".";
+        }
+        Report("[Deleted " + shown + "]");
+        task_log_.push_back("deleted " + shown);
+        return "Deleted " + shown + ".";
     }
 
     /*
@@ -986,6 +1116,12 @@ private:
         harness_.RegisterTool(
             "write_file", config_.tool_write_file, write_params,
             [this](const json& args) { return WriteFile(args); });
+
+        harness_.RegisterTool(
+            "delete_file", config_.tool_delete_file,
+            TextParam("path", "The file's name as the user gave it: the name alone for a file in the workspace "
+                              "folder; when the user named a folder, that folder followed by the name."),
+            [this](const json& args) { return RemoveFile(args); });
 
         harness_.RegisterTool(
             "execute_code", config_.tool_execute_code, exec_params,

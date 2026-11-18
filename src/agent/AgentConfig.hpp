@@ -108,10 +108,12 @@ struct ChatAgentConfig {
     std::string workspace_dir = Folder(fileSystem.RelativePathToOSPath("workspace"));
 
     /*
+        The main problem its that small model really can't controls this operations
         A message with a word of each of these two lists asks to create, save or run a file ("create a python
         script in C:\tools", "crie um arquivo na pasta"). The searches are left out for it (in a task, for the
         whole run), so a small model goes straight to write_file and execute_code instead of searching the
-        knowledge base, then the internet, before doing anything. An empty list turns this off.
+        knowledge base, then the internet, before doing anything. 
+        An empty list turns this off.
     */
     std::vector<std::string> file_task_actions = {
         // Create / Write / Edit
@@ -134,6 +136,15 @@ struct ChatAgentConfig {
         // Common Extensions
         "py", "ps1", "bat", "cmd", "sh", "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "ini", "cfg", "cpp", "h", "hpp", "js", "ts", "html", "css"};
     /*
+        A message with one of these words asks to delete a file. Asked to delete one, a small model "deletes" it
+        with write_file and no content, which only empties it, then says it is gone. So in such a message (in a
+        task, for the whole run) write_file does not empty a file that exists: it tells the model to call
+        delete_file. "clean", "clear", "limpe" are not here: emptying a file is what they ask.
+    */
+    std::vector<std::string> file_delete_actions = {
+        "delete", "remove", "erase", "del", "rm", "rmdir", "wipe",
+        "deletar", "apague", "apagar", "apaga", "exclua", "excluir", "exclui", "remova", "remover"};
+    /*
         ...unless the message also has one of these words, or asks for the internet (internet_words): then it
         needs a search too, and the searches stay. Not "documents": it is in paths (C:\Users\me\Documents).
     */
@@ -147,8 +158,9 @@ struct ChatAgentConfig {
     */
     static constexpr const char* kFallbackSystemPrompt =
         "You are a helpful assistant running on the user's Windows machine.\n"
-        "Use a tool only when the message needs it: write_file to create or save a file, execute_code to run\n"
-        "something on this machine, search_knowledge_base and search_internet for questions about facts.\n"
+        "Use a tool only when the message needs it: write_file to create or save a file, delete_file to delete\n"
+        "one, execute_code to run something on this machine, search_knowledge_base and search_internet for\n"
+        "questions about facts.\n"
         "Never invent quotes, sources, numbers or events.\n";
 
     std::string system_prompt = kFallbackSystemPrompt;
@@ -168,6 +180,10 @@ struct ChatAgentConfig {
         "Use it to create or save a script, a program, a text or any other file. It does not run anything. A path "
         "without a folder puts the file in the workspace folder. Writing outside the workspace folder, or a script "
         "with code that could do harm, happens only if the user allows it.";
+    std::string tool_delete_file =
+        "Deletes one file, or an empty folder. Use it when the user asks to delete, remove or erase a file. "
+        "write_file cannot delete a file. A path without a folder is a file in the workspace folder. It happens "
+        "only if the user allows it.";
     std::string tool_execute_code =
         "Runs code or a command on the local Windows machine now and returns its exit code, stdout and stderr. "
         "It does not save the code: to create a file, use write_file. To run a saved file, give the command that "
@@ -424,6 +440,9 @@ struct ChatAgentConfig {
                "file_task_objects = " << JoinWords(d.file_task_objects) << "\n"
                "# ...unless the message also has one of these words, or asks for the internet: then the searches stay.\n"
                "search_words = " << JoinWords(d.search_words) << "\n"
+               "# A message with one of these words asks to delete a file: write_file then does not empty a file that\n"
+               "# exists (a small model \"deletes\" that way), it tells the model to call delete_file.\n"
+               "file_delete_actions = " << JoinWords(d.file_delete_actions) << "\n"
                "\n"
                "# --- Text the model reads ---\n"
                "# The directives: which tool for which request and how to answer. Factory copies in defaults\\.\n"
@@ -446,6 +465,7 @@ struct ChatAgentConfig {
                "\n"
                "# Tool descriptions (one line each).\n"
                "tool_write_file = " << d.tool_write_file << "\n"
+               "tool_delete_file = " << d.tool_delete_file << "\n"
                "tool_execute_code = " << d.tool_execute_code << "\n"
                "tool_search_knowledge_base = " << d.tool_search_knowledge_base << "\n"
                "tool_search_internet = " << d.tool_search_internet << "\n"
@@ -707,6 +727,8 @@ private:
             file_task_objects = WordList(value);
         } else if (key == "search_words") {
             search_words = WordList(value);
+        } else if (key == "file_delete_actions") {
+            file_delete_actions = WordList(value);
         } else if (key == "system_prompt_file") {
             prompt_files.system = value;
         } else if (key == "autonomous_prompt_file") {
@@ -723,6 +745,8 @@ private:
             return SetNumber(value, 1000, 12000, web_max_result_chars);
         } else if (key == "tool_write_file") {
             tool_write_file = value;
+        } else if (key == "tool_delete_file") {
+            tool_delete_file = value;
         } else if (key == "tool_execute_code") {
             tool_execute_code = value;
         } else if (key == "tool_search_knowledge_base") {

@@ -169,7 +169,7 @@ public:
     /*
         Tools left out of the next prompts, until called again: they are not sent to the model, and a call to one
         (a small model calls what it saw earlier in the conversation) is answered with an error instead of run.
-        ChatAgent leaves the searches out of a message that asks to create or run a file. Empty: every tool.
+        ChatAgent leaves the searches out of a file task (create, change, delete or run a file). Empty: every tool.
     */
     void SetHiddenTools(std::unordered_set<std::string> names) { hidden_tools_ = std::move(names); }
 
