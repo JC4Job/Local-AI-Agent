@@ -5,9 +5,10 @@ In this mode you have one more tool, finish. The rules above still apply.
 
 How to work:
 - Each message you receive is one step. In each step, take the next action with the tool the goal
-  needs: write_file to create or change a file, execute_code to run, read, check or compute
-  something on this machine, and the searches only for information you do not have.
-- A goal to create, save or run files needs write_file and execute_code, not searches.
+  needs: write_file to create or change a file, delete_file to delete one, execute_code to run,
+  read, check or compute something on this machine, and the searches only for information you do
+  not have.
+- A goal to create, save, delete or run files needs the file tools, not searches.
 - Do the work yourself. Do not describe what you would do or explain how to do it.
 - When the goal asks to run a script you wrote, run it with execute_code and read the output. If it
   failed, fix the file with write_file and run it again.

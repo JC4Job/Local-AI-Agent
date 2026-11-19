@@ -11,9 +11,9 @@
 #include "framework/FileSystem.hpp"
 
 /*
-    What the window's parts (ChatWindow, AgentTab) share: the colors of the conversation and a few helpers for
-    drawing text.
-*/
+ * What the window's parts (ChatWindow, AgentTab) share: the colors of the conversation and a few helpers for
+ * drawing text.
+ */
 namespace ui {
 
 constexpr ImVec4 kUserColor  {0.60f, 0.50f, 0.85f, 1.0f};
@@ -40,16 +40,18 @@ inline void Dim(const std::string& text) {
 }
 
 /*
-    Text the user can select with the mouse and copy with Ctrl+C, which plain ImGui text cannot do. It is a
-    read-only multi-line input box made to look like text: no frame, no padding, and as tall as its lines, so it
-    has nothing to scroll and the mouse wheel still scrolls the conversation. Double-click selects a word, Ctrl+A
-    all of this text. One object per piece of text: it keeps the wrapped copy of it.
-
-    This Dear ImGui (1.91.8) does not wrap the text of an input box, so the lines are wrapped here, where ImGui's
-    own text would wrap: a line break takes the place of the spaces at each cut, or is added inside a word too
-    long for the line. Ctrl+C copies the original text, without those breaks, so a pasted paragraph is one line
-    again. The wrapped copy is redone only when the width or the text changes (an activity block grows).
-*/
+ * Text the user can select with the mouse and copy with Ctrl+C, which plain ImGui text cannot do. It is a
+ * read-only multi-line input box made to look like text: no frame, no padding, and as tall as its lines, so it
+ * has nothing to scroll and the mouse wheel still scrolls the conversation. Double-click selects a word, Ctrl+A
+ * all of this text. One object per piece of text: it keeps the wrapped copy of it.
+ *
+ * WARNING: this Dear ImGui (1.91.8) does not wrap the text of an input box, so the lines are wrapped here,
+ * where ImGui's own text would wrap: a line break takes the place of the spaces at each cut, or is added inside
+ * a word too long for the line. Ctrl+C copies the original text, without those breaks, so a pasted paragraph
+ * is one line again.
+ *
+ * NOTE: the wrapped copy is redone only when the width or the text changes (an activity block grows).
+ */
 class SelectableText {
 public:
     void Draw(const std::string& text, const ImVec4* color = nullptr) {
@@ -61,9 +63,11 @@ public:
         const ImVec2  size(width, lines_ * ImGui::GetFontSize() + 1.0f);
         const ImGuiID id = ImGui::GetID("##text");
         /*
-            Out of sight, only its space, so a long conversation stays cheap to draw. Except while it is active:
-            ImGui forgets the selection of a box that is not drawn, and Ctrl+C would then copy nothing.
-        */
+         * Out of sight, only its space, so a long conversation stays cheap to draw.
+         *
+         * WARNING: not while it is active: ImGui forgets the selection of a box that is not drawn, and Ctrl+C
+         * would then copy nothing.
+         */
         if (!ImGui::IsRectVisible(size) && ImGui::GetActiveID() != id) {
             ImGui::Dummy(size);
             return;
@@ -134,7 +138,7 @@ private:
                     keep(s, eol);
                     break;
                 }
-                // When not even one letter fits, ImGui moves on by one byte, which may split a UTF-8 character.
+                // WARNING: when no letter fits, ImGui moves on by one byte, which may split a UTF-8 character.
                 while (cut < eol && (static_cast<unsigned char>(*cut) & 0xC0) == 0x80) {
                     ++cut;
                 }

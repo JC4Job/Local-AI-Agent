@@ -9,25 +9,17 @@ Usage:
    - bing:       Bing's RSS feed of a search (bing.com/search?format=rss), the whole web.
    - wikipedia:  the Wikipedia API, the intro of the best articles; in Portuguese first when the
                  query is in Portuguese, then in English.
-   None needs a key or an account. 
-   A search engine may refuse automated requests or change its page
+   None needs a key or an account. A search engine may refuse automated requests or change its page
    at any time; the next source is then tried, and the output says which ones failed and why.
-
 2. Read. The top --pages results are fetched in parallel, and only the paragraphs of each page that
    contain the query's words are kept (menus, scripts and footers are dropped), with the page's date
    when it states one. A page that cannot be read keeps the search engine's snippet.
-
 3. Print, within --max-chars: the agent's context is small, and tool output is capped at 16 KB.
 
 The agent kills the script at its code_timeout_ms, so it finishes within --budget seconds with
-whatever it has by then. Uses only the standard library. 
-
-Exit code: 0 with results or with none
+whatever it has by then. Uses only the standard library. Exit code: 0 with results or with none
 found, 1 when every source failed (the agent then does not keep the result).
 """
-#Here its the deal the code provided its not fully implemented
-#Have a problems to find a good public API to get the data, tried multiple sources and this was one of the best ones
-#If you know something better i will love to know it!
 import argparse
 import email.utils
 import ipaddress

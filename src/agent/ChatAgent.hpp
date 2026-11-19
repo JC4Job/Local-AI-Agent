@@ -31,16 +31,18 @@
 #include "common/MacroWrap.h"
 
 /*
-    The chatbot: model, system prompt and tools. It knows nothing about how it is shown.
-    A front end (the console in cli_main.cpp, the window in ChatWindow.hpp) calls Ask() and, optionally,
-    receives tool activity through an ActivityHandler. Without one, activity is printed to the console.
-*/
+ * ChatAgent - the chatbot: model, system prompt and tools. It knows nothing about how it is shown.
+ *
+ * A front end (the console in cli_main.cpp, the window in ChatWindow.hpp) calls Ask() and, optionally,
+ * receives tool activity through an ActivityHandler. Without one, activity is printed to the console.
+ */
 class ChatAgent {
 public:
     /*
-        One status line per call (tool started, code being run...), no surrounding newlines.
-        Called on the thread that runs Ask().
-    */
+     * One status line per call (tool started, code being run...), no surrounding newlines.
+     *
+     * WARNING: called on the thread that runs Ask().
+     */
     using ActivityHandler = std::function<void(const std::string&)>;
     // The reply as the model writes it; see AgentHarness::StreamHandler.
     using StreamHandler = AgentHarness::StreamHandler;
@@ -57,7 +59,7 @@ public:
           rag_(MakeRagConfig(config_),
                [this](const std::vector<std::string>& texts, std::vector<std::vector<float>>& vectors,
                       unsigned timeout_ms) {
-                   // The same options on every request: Ollama reloads a model when its options change.
+                   // WARNING: the same options on every request: Ollama reloads a model when they change.
                    const json options = {{"num_ctx", config_.embed_num_ctx}};
                    return embed_client_.Embed(config_.embed_model, texts, vectors, options, timeout_ms);
                }) {
@@ -73,30 +75,41 @@ public:
         }
     }
 
-    // Shows the reply while the model writes it, on the thread that runs Ask(). Do not call while Ask() is running.
+    /*
+     * Shows the reply while the model writes it.
+     *
+     * WARNING: the handler is called on the thread that runs Ask(). Do not call this while Ask() is running.
+     */
     void SetStreamHandler(StreamHandler handler) { harness_.SetStreamHandler(std::move(handler)); }
 
     /*
-        Asks the user whether code that CLISecurityChecking flags may run, or a file be written outside the
-        workspace folder (the console's prompt, the window's popup). Called on the thread that runs Ask(), which
-        waits for the answer. Without a handler, flagged code is never run nor such a file written. Do not call
-        while Ask() is running.
-    */
+     * Asks the user whether code that CLISecurityChecking flags may run, or a file be written outside the
+     * workspace folder (the console's prompt, the window's popup). Without a handler, flagged code is never run
+     * nor such a file written.
+     *
+     * WARNING: the handler is called on the thread that runs Ask(), which waits for the answer. Do not call this
+     * while Ask() is running.
+     */
     void SetConfirmHandler(ConfirmHandler handler) { confirm_ = std::move(handler); }
 
     /*
-        Stops the Ask() in progress, which then returns what the model had written so far (see
-        AgentHarness::Cancel). Meant for a Stop button: safe to call from any thread while Ask() runs.
-    */
+     * Stops the Ask() in progress, which then returns what the model had written so far (see
+     * AgentHarness::Cancel). Meant for a Stop button: safe to call from any thread while Ask() runs.
+     */
     void Cancel() { harness_.Cancel(); }
 
     /*
-        Takes the settings the Settings window saved (`config`: ChatAgentConfig::Load() again) from the next Ask()
-        on, keeping the conversation: the model, the size of the context and of the replies, the tool rounds, the
-        task steps, the knowledge base limits and the system prompt, which holds an agent's instructions. The rest
-        (endpoint, folders, tool descriptions) stays as it was at the start. Ollama reloads a model whose num_ctx
-        changes, so that reply starts slower. Do not call while Ask() is running.
-    */
+     * Takes the settings the Settings window saved (`config`: ChatAgentConfig::Load() again) from the next Ask()
+     * on, keeping the conversation: the model, the size of the context and of the replies, the tool rounds, the
+     * task steps, the knowledge base limits and the system prompt, which holds an agent's instructions.
+     *
+     * WARNING: the rest (endpoint, folders, tool descriptions) is not applied: it stays as it was when the
+     * agent was made.
+     *
+     * NOTE: Ollama reloads a model whose num_ctx changes, so the next reply starts slower.
+     *
+     * WARNING: do not call this while Ask() is running.
+     */
     void ApplySettings(const Config& config) {
         const bool kb_changed = config.kb_max_passages != config_.kb_max_passages ||
                                 config.kb_max_result_chars != config_.kb_max_result_chars;
@@ -122,14 +135,16 @@ public:
         }
     }
 
-    // The tool handlers capture `this`.
+    // WARNING: not copyable: the tool handlers capture `this`.
     ChatAgent(const ChatAgent&)             = delete;
     ChatAgent& operator=(const ChatAgent&)  = delete;
 
     /*
-        Adds a tool next to the built-in ones (AutonomousAgent adds finish). `ends_prompt`: see
-        AgentHarness::RegisterTool. Call before the first Ask().
-    */
+     * Adds a tool next to the built-in ones (AutonomousAgent adds finish). `ends_prompt`: see
+     * AgentHarness::RegisterTool.
+     *
+     * WARNING: call it before the first Ask(): the tool list is not guarded against a prompt in progress.
+     */
     void RegisterTool(const std::string& name, const std::string& description, json parameters,
                       AgentHarness::ToolHandler handler, bool ends_prompt = false) {
         harness_.RegisterTool(name, description, std::move(parameters), std::move(handler), ends_prompt);
@@ -139,19 +154,20 @@ public:
     const AgentHarness::PromptStats& LastAsk() const { return harness_.LastPrompt(); }
 
     /*
-        Tool calls in the last Ask() that repeat one already made in this conversation: a search with the same
-        words (answered with a reminder, from memory, or run again when the earlier one failed), the same file
-        written again with the same content, the same code run again. They bring nothing new, so
-        AutonomousAgent does not count them as progress.
-    */
+     * Tool calls in the last Ask() that repeat one already made in this conversation: a search with the same
+     * words (answered with a reminder, from memory, or run again when the earlier one failed), the same file
+     * written again with the same content, the same code run again. They bring nothing new, so
+     * AutonomousAgent does not count them as progress.
+     */
     int LastAskRepeats() const { return repeated_actions_; }
 
     /*
-        What the tools did since the last Ask(), one line each ("wrote C:\...\a.py", "ran: python a.py -> exit code
-        0", "searched the internet for: x"), the last `max_lines` of it. AutonomousAgent puts it in its messages:
-        a small model does not keep track of what it already did, and a goal restated alone sends it to do it all
-        over again. Empty when the tools did nothing.
-    */
+     * What the tools did since the last Ask(), one line each ("wrote C:\...\a.py", "ran: python a.py -> exit code
+     * 0", "searched the internet for: x"), the last `max_lines` of it. Empty when the tools did nothing.
+     *
+     * NOTE: AutonomousAgent puts it in its messages because a small model does not keep track of what it
+     * already did, and a goal restated alone sends it to do it all over again.
+     */
     std::string TaskLog(size_t max_lines = 12) const {
         std::string text;
         const size_t first = task_log_.size() > max_lines ? task_log_.size() - max_lines : 0;
@@ -162,10 +178,12 @@ public:
     }
 
     /*
-        Sends one user message and returns the model's final reply, after any tool calls.
-        Blocks for as long as the model takes (minutes on a slow machine): call it off the UI thread.
-        Not safe to call from two threads at once.
-    */
+     * Sends one user message and returns the model's final reply, after any tool calls.
+     *
+     * WARNING: blocks for as long as the model takes (minutes on a slow machine): call it off the UI thread.
+     *
+     * WARNING: not safe to call from two threads at once.
+     */
     std::string Ask(const std::string& prompt) {
         kb_searched_        = false;
         internet_searched_  = false;
@@ -188,15 +206,18 @@ public:
     }
 
     /*
-        Like Ask(), for a message that goes on with the same task: AutonomousAgent's next step. The search order
-        carries over from the task's earlier messages instead of starting again: once the knowledge base has been
-        searched, search_internet runs at once, and a request for the internet stays in force even when the message
-        does not repeat it (a long goal is not restated in every step). So does a file task: the searches stay out
-        for the whole run, and so do a request to delete (see WriteFile) and TaskLog().
-        `only_tools`: offer only these tools for this message, with at most 2 rounds of tool calls: a short
-        question, not a step of work (AutonomousAgent asks with finish alone whether the goal is done). Empty: the
-        usual tools and rounds.
-    */
+     * Like Ask(), for a message that goes on with the same task: AutonomousAgent's next step.
+     *
+     * The search order carries over from the task's earlier messages instead of starting again: once the
+     * knowledge base has been searched, search_internet runs at once, and a request for the internet stays in
+     * force even when the message does not repeat it (a long goal is not restated in every step). So does a
+     * file task: the searches stay out for the whole run, and so do a request to delete (see WriteFile) and
+     * TaskLog().
+     *
+     * `only_tools`: offer only these tools for this message, with at most 2 rounds of tool calls: a short
+     * question, not a step of work (AutonomousAgent asks with finish alone whether the goal is done). Empty:
+     * the usual tools and rounds.
+     */
     std::string ContinueTask(const std::string& prompt, std::unordered_set<std::string> only_tools = {}) {
         searched_this_prompt_.clear();
         repeated_actions_ = 0;
@@ -216,10 +237,11 @@ public:
     }
 
     /*
-        Forgets the conversation and the search results kept in memory, and updates the knowledge base index on
-        the next search, so documents added to the knowledge base since are found. Do not call while Ask() is
-        running.
-    */
+     * Forgets the conversation and the search results kept in memory, and updates the knowledge base index on
+     * the next search, so documents added to the knowledge base since are found.
+     *
+     * WARNING: do not call this while Ask() is running.
+     */
     void NewConversation() {
         harness_.ResetConversation();
         search_cache_.Clear();
@@ -229,12 +251,15 @@ public:
     }
 
     /*
-        Brings the knowledge base index up to date, then embeds every passage that has no vector yet. With
-        bge-m3 on a laptop that is ~1.6 passages per second: hours for a large knowledge base, so it is a batch
-        job (agent.exe --index), not part of a chat. Progress is saved as it goes; `cancel`, when set, stops it
-        after the current batch, and the next run continues from there. Throws when the knowledge folder is
-        missing. Do not call while Ask() is running.
-    */
+     * Brings the knowledge base index up to date, then embeds every passage that has no vector yet. Progress is
+     * saved as it goes; `cancel`, when set, stops it after the current batch, and the next run continues from
+     * there. Throws when the knowledge folder is missing.
+     *
+     * WARNING: with bge-m3 on a laptop that is ~1.6 passages per second, hours for a large knowledge base: a
+     * batch job (agent.exe --index), not part of a chat.
+     *
+     * WARNING: do not call this while Ask() is running.
+     */
     std::string IndexKnowledgeBase(const ActivityHandler& progress = nullptr, const std::atomic<bool>* cancel = nullptr) {
         const RagIndex::SyncReport sync = rag_.Sync(progress);
         rag_synced_ = true;
@@ -296,16 +321,17 @@ private:
     // rag_ has been brought up to date with the knowledge folder in this conversation.
     bool                  rag_synced_ = false;
     /*
-        The search order is enforced here, not only in the prompt: a small model reorders prompt steps,
-        and when a step errors it moves on to the next. Until the knowledge base has been searched for
-        the current prompt (or, in a task, in any of its steps: see ContinueTask), search_internet searches
-        the knowledge base instead.
-    */
+     * Until the knowledge base has been searched for the current prompt (or, in a task, in any of its steps:
+     * see ContinueTask), search_internet searches the knowledge base instead.
+     *
+     * WARNING: the search order is enforced here, not only in the prompt: a small model reorders prompt
+     * steps, and when a step errors it moves on to the next.
+     */
     bool                  kb_searched_ = false;
     /*
-        The order is reversed when the user's message asks for the internet: until the internet has been
-        searched for the current prompt (or task), search_knowledge_base searches the internet instead.
-    */
+     * The order is reversed when the user's message asks for the internet: until the internet has been
+     * searched for the current prompt (or task), search_knowledge_base searches the internet instead.
+     */
     bool                  internet_requested_ = false;
     bool                  internet_searched_ = false;
     // The prompt (or task) asks to delete a file (file_delete_actions): write_file does not empty one; see WriteFile.
@@ -315,17 +341,17 @@ private:
     // Searches already answered for the current prompt, by cache key.
     std::unordered_set<std::string> searched_this_prompt_;
     /*
-        Every search of the conversation, by cache key, whether it worked or not (a failed one is not in
-        search_cache_), every file written with its content and every code run; and how many tool calls of the
-        last Ask() were already in it; see LastAskRepeats.
-    */
+     * Every search of the conversation, by cache key, whether it worked or not (a failed one is not in
+     * search_cache_), every file written with its content and every code run; and how many tool calls of the
+     * last Ask() were already in it; see LastAskRepeats.
+     */
     std::unordered_set<std::string> actions_this_conversation_;
     int                             repeated_actions_ = 0;
     std::vector<std::string>        task_log_;     // see TaskLog
     /*
-        The script write_file saved last, as execute_code runs it (its name when it is in the workspace): what a
-        bare "python" runs; see SavedScriptCommand.
-    */
+     * The script write_file saved last, as execute_code runs it (its name when it is in the workspace): what a
+     * bare "python" runs; see SavedScriptCommand.
+     */
     std::string                     last_script_;
 
     // Counts `key` (tool and arguments) as a repeat when the conversation already made that call.
@@ -406,10 +432,12 @@ private:
     }
 
     /*
-        Runs a script with the model's text as its last argument, after `options` (built by the program, never
-        from the model's text). No shell is involved, and the text is reduced to letters, digits and dashes, so
-        it cannot break out of the quoted argument; a "--" before it keeps a leading dash from reading as an option.
-    */
+     * Runs a script with the model's text as its last argument, after `options` (built by the program).
+     *
+     * WARNING: the model's text is untrusted. No shell is involved, and the text is reduced to letters, digits
+     * and dashes, so it cannot break out of the quoted argument; a "--" before it keeps a leading dash from
+     * reading as an option. Never build `options` from the model's text.
+     */
     ScriptResult RunSearchScript(const char* script, const std::string& text, const std::string& options = {}) const {
         std::string words;
         for (unsigned char c : text) {
@@ -419,7 +447,7 @@ private:
             return {"Error: no search words given.", false};
         }
 
-        // -X utf8: writing to a pipe, Python would use the ANSI code page and mangle accents.
+        // WARNING: keep -X utf8: writing to a pipe, Python would use the ANSI code page and mangle accents.
         const std::string command =
             "python -X utf8 \"" + config_.scripts_dir + script + "\" " + options + " -- \"" + words + "\"";
         auto res = CodeExecutor::ExecuteCommand(command, exec_limits_);
@@ -438,14 +466,18 @@ private:
     }
 
     /*
-        Every search goes through here.
-        - Same search again within one prompt: a short reminder instead of the same passages. A small model
-          otherwise loops on it, and each copy takes ~1000 tokens of the 8192-token context.
-        - Same search in a later prompt: the result comes from memory. The harness has shortened it in the
-          context by then, so the model may legitimately need it again; no need to rerun the script.
-        Failures (network down, timeout) are not kept, so the next attempt runs the search again.
-        `run` performs the search; it is called only when neither of the above applies.
-    */
+     * Every search goes through here. `run` performs the search; it is called only when neither case below
+     * applies.
+     *
+     *   - Same search again within one prompt: a short reminder instead of the same passages.
+     *   - Same search in a later prompt: the result comes from memory. The harness has shortened it in the
+     *     context by then, so the model may legitimately need it again; no need to rerun the script.
+     *
+     * WARNING: without the reminder a small model loops on the same search, and each copy takes ~1000 tokens
+     * of the context.
+     *
+     * NOTE: failures (network down, timeout) are not kept, so the next attempt runs the search again.
+     */
     template <class Run>
     std::string Search(const SearchTool& tool, const std::string& query, Run run) {
         const std::string key = ToolResultCache::MakeKey(tool.id, query);
@@ -471,11 +503,12 @@ private:
     }
 
     /*
-        True when the user's message explicitly asks for the internet: "search the internet", "look it up online",
-        "check Wikipedia", "pesquise na internet", "busque na web". Plain word matching, because a small model
-        does not reliably act on this from the prompt alone. Bare "web" is not enough ("web app"); it needs a
-        word before it such as "the web" or "na web". Both word lists are in config\settings.txt.
-    */
+     * True when the user's message explicitly asks for the internet: "search the internet", "look it up online",
+     * "check Wikipedia", "pesquise na internet", "busque na web". Both word lists are in config\settings.txt.
+     *
+     * NOTE: plain word matching, because a small model does not reliably act on this from the prompt alone.
+     * Bare "web" is not enough ("web app"); it needs a word before it such as "the web" or "na web".
+     */
     bool AsksForInternet(const std::string& prompt) const {
         const std::vector<std::string> words = Words(prompt);
         for (size_t i = 0; i < words.size(); ++i) {
@@ -499,11 +532,11 @@ private:
     };
 
     /*
-        Whether the message asks to create, change, delete or run a file: it has a word of file_task_actions and
-        one of file_task_objects ("create a python script", "apague o arquivo velho.txt"), and it does not ask for
-        a search too (the internet, or a word of search_words). Apart from that, whether it asks to delete
-        (file_delete_actions). Plain word matching, as AsksForInternet; the lists are in config\settings.txt.
-    */
+     * Whether the message asks to create, change, delete or run a file: it has a word of file_task_actions and
+     * one of file_task_objects ("create a python script", "apague o arquivo velho.txt"), and it does not ask for
+     * a search too (the internet, or a word of search_words). Apart from that, whether it asks to delete
+     * (file_delete_actions). Plain word matching, as AsksForInternet; the lists are in config\settings.txt.
+     */
     FileTask FindFileTask(const std::string& prompt) const {
         const std::vector<std::string> words = Words(prompt);
         FileTask task;
@@ -531,10 +564,11 @@ private:
     }
 
     /*
-        The words of `text`, ASCII letters lowered: "Crie hello.py!" -> {"crie", "hello", "py"}. An underscore
-        stays in its word, so a file name is not read as words of the lists: edit_arquivo.py gives "edit_arquivo"
-        and "py", not "edit" (an action) and "arquivo".
-    */
+     * The words of `text`, ASCII letters lowered: "Crie hello.py!" -> {"crie", "hello", "py"}.
+     *
+     * NOTE: an underscore stays in its word, so a file name is not read as words of the lists: edit_arquivo.py
+     * gives "edit_arquivo" and "py", not "edit" (an action) and "arquivo".
+     */
     static std::vector<std::string> Words(const std::string& text) {
         std::vector<std::string> words;
         std::string word;
@@ -569,11 +603,13 @@ private:
     }
 
     /*
-        The passages of the saved documents that best match the query, by keywords and by meaning. On the first
-        search of a conversation the index catches up with the knowledge folder: documents added, changed or
-        removed since. New passages are found by keywords at once; by meaning only after IndexKnowledgeBase()
-        embeds them, which is too slow to do here.
-    */
+     * The passages of the saved documents that best match the query, by keywords and by meaning. On the first
+     * search of a conversation the index catches up with the knowledge folder: documents added, changed or
+     * removed since.
+     *
+     * NOTE: new passages are found by keywords at once, by meaning only after IndexKnowledgeBase() embeds
+     * them: embedding is too slow to do here.
+     */
     ScriptResult SearchDocuments(const std::string& query) {
         try {
             if (!rag_synced_) {
@@ -623,9 +659,11 @@ private:
         NoteAction("execute_code|" + Lower(lang) + "|" + TrimSpace(code));
 
         /*
-            Code that could do harm runs only if the user says yes. The model is told not to try another way: a
-            small model otherwise rewrites the same thing until it is no longer flagged.
-        */
+         * Code that could do harm runs only if the user says yes.
+         *
+         * WARNING: the model is told not to try another way: a small model otherwise rewrites the same thing
+         * until it is no longer flagged.
+         */
         const CLISecurityChecking::Report risk = CLISecurityChecking::Check(lang, code);
         if (risk.Flagged()) {
             // One line: the front end's question shows the details.
@@ -675,13 +713,17 @@ private:
     }
 
     /*
-        The write_file tool: saves `content` as the file at `path`, creating its folders. A path without a drive is
-        relative to the workspace folder. Without it, a model asked for a script put the script in execute_code,
-        which ran it once and saved nothing.
-        The user is asked first, as for flagged code, when the file goes outside the workspace folder (among their
-        own files) or is a script whose code CLISecurityChecking flags: execute_code would later run it with a
-        command that shows nothing of it (python "script.py"), so its code is checked here.
-    */
+     * The write_file tool: saves `content` as the file at `path`, creating its folders. A path without a drive is
+     * relative to the workspace folder.
+     *
+     * NOTE: without this tool, a model asked for a script put the script in execute_code, which ran it once and
+     * saved nothing.
+     *
+     * WARNING: the user is asked first, as for flagged code, when the file goes outside the workspace folder
+     * (among their own files) or is a script whose code CLISecurityChecking flags. execute_code later runs a
+     * saved script with a command that shows nothing of it (python "script.py"), so its code must be checked
+     * here.
+     */
     std::string WriteFile(const json& args) {
         namespace fs = std::filesystem;
         const std::string given   = StringArg(args, "path");
@@ -709,9 +751,11 @@ private:
         NoteAction("write_file|" + Lower(shown) + "|" + content->get<std::string>());
 
         /*
-            Asked to delete a file, a small model writes it with no content, which only empties it, and then says
-            it is gone. After NoteAction, so the same call again counts as a repeat (AutonomousAgent stops on those).
-        */
+         * WARNING: asked to delete a file, a small model writes it with no content, which only empties it, and
+         * then says it is gone.
+         *
+         * NOTE: after NoteAction, so the same call again counts as a repeat (AutonomousAgent stops on those).
+         */
         if (replaces && delete_task_ && TrimSpace(content->get<std::string>()).empty()) {
             Report("[write_file with no content on " + shown + ", in a message that asks to delete: not written]");
             return "Not written: write_file does not delete files. With no content it would only empty " + shown +
@@ -723,7 +767,7 @@ private:
         if (const char* lang = ScriptLanguage(path)) {
             report.findings = CLISecurityChecking::Check(lang, content->get<std::string>()).findings;
         }
-        // After the script's findings, so a DANGER among them stays first.
+        // NOTE: after the script's findings, so a DANGER among them stays first.
         if (InSystemFolder(path)) {
             report.findings.push_back({CLISecurityChecking::Severity::Danger, "Windows",
                                        "writes into Windows or the installed programs", 0, shown, {}});
@@ -746,9 +790,11 @@ private:
         }
 
         /*
-            As CodeExecutor writes its scripts: Windows PowerShell 5.1 reads a .ps1 without a BOM as ANSI, and cmd
-            mis-parses labels in a .cmd or .bat with LF-only lines.
-        */
+         * Written as CodeExecutor writes its scripts.
+         *
+         * WARNING: Windows PowerShell 5.1 reads a .ps1 without a BOM as ANSI, and cmd mis-parses labels in a
+         * .cmd or .bat with LF-only lines.
+         */
         const std::string ext   = Lower(path.extension().u8string());
         const std::string& text = content->get_ref<const std::string&>();
         const bool        crlf  = ext == ".cmd" || ext == ".bat";
@@ -797,10 +843,12 @@ private:
     }
 
     /*
-        The full path a file tool (`tool`: write_file, delete_file) names: a path without a drive is in the
-        workspace folder. Empty, with `error` for the model, when it is neither full nor a name in the workspace:
-        "C:file.py" and "\file.py" depend on the current drive or folder.
-    */
+     * The full path a file tool (`tool`: write_file, delete_file) names: a path without a drive is in the
+     * workspace folder. Empty, with `error` for the model, when it is neither full nor a name in the workspace.
+     *
+     * WARNING: "C:file.py" and "\file.py" are refused: they depend on the current drive or folder, so where they
+     * land cannot be known.
+     */
     std::filesystem::path ToolPath(const std::string& given, const char* tool, std::string& error) const {
         namespace fs = std::filesystem;
         fs::path path = fs::u8path(given);
@@ -816,12 +864,16 @@ private:
     }
 
     /*
-        The delete_file tool: deletes the file at `path`, or an empty folder. A path without a drive is in the
-        workspace folder. Without it, a model asked to delete a file wrote it with no content (see WriteFile).
-        The user is always asked first, in the workspace too: a deleted file does not come back, and execute_code
-        asks before a del as well. A folder with files in it is not deleted: a whole tree is for the user to delete.
-    */
-    std::string RemoveFile(const json& args) {  // not DeleteFile: windows.h makes that DeleteFileW
+     * The delete_file tool: deletes the file at `path`, or an empty folder. A path without a drive is in the
+     * workspace folder.
+     *
+     * NOTE: without this tool, a model asked to delete a file wrote it with no content (see WriteFile).
+     *
+     * WARNING: the user is always asked first, in the workspace too: a deleted file does not come back, and
+     * execute_code asks before a del as well. A folder with files in it is never deleted: a whole tree is for
+     * the user to delete.
+     */
+    std::string RemoveFile(const json& args) {  // WARNING: not DeleteFile: windows.h #defines that to DeleteFileW
         namespace fs = std::filesystem;
         const std::string given = StringArg(args, "path");
         if (given.empty()) {
@@ -884,11 +936,13 @@ private:
     }
 
     /*
-        For a .py file: what Python finds wrong with its syntax ("line 1: '(' was never closed"), empty when it
-        reads it, or when the file is not Python or Python cannot be started. A small model writes a double quote
-        unescaped in the JSON of its tool call, and the content arrives cut there (print("Hello") as print( ):
-        this tells it so, instead of a later run failing with no clue why.
-    */
+     * For a .py file: what Python finds wrong with its syntax ("line 1: '(' was never closed"), empty when it
+     * reads it, or when the file is not Python or Python cannot be started.
+     *
+     * WARNING: a small model writes a double quote unescaped in the JSON of its tool call, and the content
+     * arrives cut there (print("Hello") as print( ). This tells it so, instead of a later run failing with no
+     * clue why.
+     */
     std::string PythonSyntaxError(const std::filesystem::path& path) const {
         if (Lower(path.extension().u8string()) != ".py") {
             return {};
@@ -919,12 +973,14 @@ private:
     }
 
     /*
-        Asked to run a saved script, a small model passes its name as the code (language python, code hello.py,
-        which Python reads as a variable: NameError), the command as Python code (python hello.py: SyntaxError),
-        or the interpreter alone (python, which runs nothing). When the code is one line naming an existing
-        script, alone or after python / py, or is "python" alone after write_file saved a .py, this is the command
-        that runs that script; otherwise empty, and the code runs as given.
-    */
+     * When the code is one line naming an existing script, alone or after python / py, or is "python" alone
+     * after write_file saved a .py: the command that runs that script. Otherwise empty, and the code runs as
+     * given.
+     *
+     * WARNING: asked to run a saved script, a small model passes its name as the code (language python, code
+     * hello.py, which Python reads as a variable: NameError), the command as Python code (python hello.py:
+     * SyntaxError), or the interpreter alone (python, which runs nothing).
+     */
     std::string SavedScriptCommand(const std::string& lang, const std::string& code) const {
         namespace fs = std::filesystem;
         std::string line = TrimSpace(code);
@@ -1054,9 +1110,11 @@ private:
     }
 
     /*
-        websearch.py's options, from the web_* settings. Its budget ends 1.5 s before code_timeout_ms kills it
-        (Python's start and the output take the rest), so it prints what it has instead of being cut off.
-    */
+     * websearch.py's options, from the web_* settings.
+     *
+     * WARNING: its budget ends 1.5 s before code_timeout_ms kills it (Python's start and the output take the
+     * rest), so it prints what it has instead of being cut off. Keep that margin.
+     */
     std::string WebSearchOptions() const {
         std::string sources;
         for (const std::string& source : config_.web_sources) {

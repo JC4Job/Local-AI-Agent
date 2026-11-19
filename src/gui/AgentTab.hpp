@@ -18,24 +18,25 @@
 #include "gui/UiCommon.hpp"
 
 /*
-    One agent in the window, drawn in its own tab: a ChatAgent for the chat and an AutonomousAgent for Run task,
-    with their conversation, the message being typed and a worker thread. ChatWindow holds one per agent and
-    draws what is no one agent's: the tab bar, Settings, New agent and the code confirmation.
-
-    ChatAgent::Ask() blocks until the model answers, so each prompt runs on the tab's worker thread and the
-    window keeps repainting meanwhile. Every tab has its own worker, so agents work at the same time. The worker
-    never touches UI state: it posts events (tool activity, pieces of the reply as the model writes them, step
-    notes, the final reply) to an inbox, and Poll() applies them on the UI thread every frame, for every tab, so
-    a tab in the background still shows when its agent is done.
-
-    Run task sends the message to the AutonomousAgent instead, as a goal it works on alone, step by step, until
-    it calls finish (AutonomousAgent.hpp). Each step's note is kept as the step ends, and the result comes last.
-    The task agent is a second ChatAgent with its own conversation: the chat does not see the tasks, and a task
-    does not see the chat.
-
-    Code that CLISecurityChecking flags waits for the user: the worker blocks in Session::Confirm until
-    ChatWindow's popup calls Answer(). Stop and closing the window answer no.
-*/
+ * AgentTab - one agent in the window, drawn in its own tab: a ChatAgent for the chat and an AutonomousAgent for
+ * Run task, with their conversation, the message being typed and a worker thread. ChatWindow holds one per agent
+ * and draws what is no one agent's: the tab bar, Settings, New agent and the code confirmation.
+ *
+ * ChatAgent::Ask() blocks until the model answers, so each prompt runs on the tab's worker thread and the
+ * window keeps repainting meanwhile. Every tab has its own worker, so agents work at the same time.
+ *
+ * Run task sends the message to the AutonomousAgent instead, as a goal it works on alone, step by step, until
+ * it calls finish (AutonomousAgent.hpp). Each step's note is kept as the step ends, and the result comes last.
+ * The task agent is a second ChatAgent with its own conversation: the chat does not see the tasks, and a task
+ * does not see the chat.
+ *
+ * WARNING: the worker never touches UI state. It posts events (tool activity, pieces of the reply as the model
+ * writes them, step notes, the final reply) to an inbox, and Poll() applies them on the UI thread every frame,
+ * for every tab, so a tab in the background still shows when its agent is done.
+ *
+ * WARNING: code that CLISecurityChecking flags waits for the user: the worker blocks in Session::Confirm until
+ * ChatWindow's popup calls Answer(). Stop and closing the window answer no, or the worker would wait forever.
+ */
 class AgentTab {
 public:
     // The code confirmation the worker waits on, copied for ChatWindow's popup.
@@ -50,9 +51,9 @@ public:
     enum class Action { None, Delete };
 
     /*
-        `config`: ChatAgentConfig::Load(), of the default agent or of one made in the window. `id`: unique in the
-        window, for the tab's ImGui ID.
-    */
+     * `config`: ChatAgentConfig::Load(), of the default agent or of one made in the window. `id`: unique in the
+     * window, for the tab's ImGui ID.
+     */
     AgentTab(ChatAgentConfig config, int id) : id_(id), session_(std::make_shared<Session>()) {
         Session* session = session_.get();  // the agents live inside the session, so this never dangles
         const ChatAgent::ActivityHandler on_activity = [session](const std::string& line) {
@@ -87,14 +88,14 @@ public:
     }
 
     ~AgentTab() {
-        session_->Answer(false);  // a worker waiting for a confirmation would otherwise wait forever
+        session_->Answer(false);  // WARNING: a worker waiting for a confirmation would otherwise wait forever
         if (!worker_.joinable()) {
             return;
         }
         /*
-            A worker still waiting on the model can take minutes to return. It holds its own reference to the
-            session, so let it finish on its own; the process is exiting anyway.
-        */
+         * NOTE: a worker still waiting on the model can take minutes to return. It holds its own reference to
+         * the session, so let it finish on its own; the process is exiting anyway.
+         */
         if (busy_) {
             worker_.detach();
         } else {
@@ -129,7 +130,11 @@ public:
         return (task_ ? "Working on the task... " : "Thinking... ") + seconds;
     }
 
-    // Forgets the conversation (New chat). Not while Busy().
+    /*
+     * Forgets the conversation (New chat).
+     *
+     * WARNING: not while Busy(): the worker is using the agent.
+     */
     void NewConversation() {
         messages_.clear();
         draft_.clear();
@@ -137,7 +142,11 @@ public:
         focus_input_ = true;
     }
 
-    // Gives the chat and Run task the settings the Settings window saved; see ChatAgent::ApplySettings. Not while Busy().
+    /*
+     * Gives the chat and Run task the settings the Settings window saved; see ChatAgent::ApplySettings.
+     *
+     * WARNING: not while Busy(): the worker is using the agents.
+     */
     void ApplySettings(const ChatAgentConfig& config) {
         session_->agent->ApplySettings(config);
         session_->task->ApplySettings(config);
@@ -150,7 +159,12 @@ public:
         scroll_to_bottom_ = true;
     }
 
-    // Applies what the worker posted. Call every frame, for every tab, shown or not.
+    /*
+     * Applies what the worker posted.
+     *
+     * WARNING: call it every frame, for every tab, shown or not, or a tab in the background never shows that
+     * its agent is done.
+     */
     void Poll() { DrainInbox(); }
 
     // The id of the question the worker waits on, 0 when it waits on none.
@@ -208,9 +222,11 @@ private:
         }
 
         /*
-            The code confirmation the worker is waiting for. The worker fills it in and waits; the UI thread shows
-            it and answers. Guarded by `mu`.
-        */
+         * The code confirmation the worker is waiting for. The worker fills it in and waits; the UI thread shows
+         * it and answers.
+         *
+         * WARNING: guarded by `mu`.
+         */
         std::condition_variable     confirm_cv;
         int                         confirm_id      = 0;      // counts the questions, so the UI sees a new one
         bool                        confirm_waiting = false;  // a question is waiting for its answer
@@ -255,7 +271,7 @@ private:
         ui::SelectableText view;       // draws `text` so it can be selected and copied
     };
 
-    // UI thread only.
+    // WARNING: UI thread only.
     int                      id_;
     std::string              name_;
     std::shared_ptr<Session> session_;
@@ -362,9 +378,9 @@ private:
     }
 
     /*
-        Worker thread: works on `goal` with the task agent, then posts the result. A run that failed because the
-        model did not reply is posted as a chat reply's error is, with the same hint about Ollama.
-    */
+     * Worker thread: works on `goal` with the task agent, then posts the result. A run that failed because the
+     * model did not reply is posted as a chat reply's error is, with the same hint about Ollama.
+     */
     static void RunTask(Session& session, const std::string& goal) {
         AutonomousAgent::Result result;
         try {
@@ -402,9 +418,9 @@ private:
     }
 
     /*
-        The line above the conversation: the agent's model and where it comes from, with its instructions on
-        hover. An agent made in the window also has Delete agent there.
-    */
+     * The line above the conversation: the agent's model and where it comes from, with its instructions on
+     * hover. An agent made in the window also has Delete agent there.
+     */
     Action DrawAbout() {
         const ChatAgentConfig& config = Settings();
         const std::string      from   = Made() ? ui::ShortPath(config.agent_file)
@@ -524,7 +540,7 @@ private:
         if (busy_) {
             // While the agent works, the button stops it.
             ImGui::BeginDisabled(stopping_);
-            // No Esc shortcut: in the focused input box, Esc reverts what is being typed.
+            // NOTE: no Esc shortcut: in the focused input box, Esc reverts what is being typed.
             if (ImGui::Button(stopping_ ? "Stopping" : "Stop", ImVec2(-FLT_MIN, height))) {
                 Stop();
             }

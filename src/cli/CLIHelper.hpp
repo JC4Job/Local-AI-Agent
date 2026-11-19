@@ -15,12 +15,13 @@
 #include "common/MacroWrap.h"
 
 /*
-    Reads the user's prompt from the command-line arguments, piped stdin or the console.
-    Control flow of the CLI application is in cli_main.cpp, which uses this helper to get the input.
-    captures multi-line input if the last character of a line is a continuation character (\ or `).
-    captures the file exist s in the command-line arguments, piped stdin or the console.
-    used for command line interface applications that require user input, such as chatbots or interactive scripts.
-*/ 
+ * CLIHelper - reads the user's prompt from the command-line arguments, piped stdin or the console, for command
+ * line applications that need user input (chatbots, interactive scripts). The control flow is in cli_main.cpp,
+ * which uses this to get the input.
+ *
+ * Piped input can be a whole file (agent.exe < question.txt). At the console, a line whose last character is a
+ * continuation character (\ or `) continues on the next one, so the input can span several lines.
+ */
 class CLIHelper {
 public:
     static bool StdinIsConsole() {
@@ -28,9 +29,9 @@ public:
     }
 
     /*
-        `first`: the first argument that is part of the input; 2 skips an option before it, as in
-        `agent.exe --auto "goal"`. `label`: the console prompt.
-    */
+     * `first`: the first argument that is part of the input; 2 skips an option before it, as in
+     * `agent.exe --auto "goal"`. `label`: the console prompt.
+     */
     static std::string CaptureCLIInput(int argc, char* argv[], int first = 1, const char* label = "User > ") {
         if (argc > first) {
             const std::string utf8 = Utf8Arguments(first);
@@ -46,7 +47,7 @@ public:
         if (!StdinIsConsole()) {
             std::stringstream ss;
             ss << std::cin.rdbuf();
-            // PowerShell starts what it pipes with a UTF-8 BOM, even an empty string.
+            // WARNING: PowerShell starts what it pipes with a UTF-8 BOM, even an empty string: strip it.
             std::string piped = ss.str();
             if (piped.compare(0, 3, "\xEF\xBB\xBF") == 0) {
                 piped.erase(0, 3);
@@ -69,10 +70,11 @@ public:
 
 private:
     /*
-        The command-line arguments from `first` on, as UTF-8, joined by spaces. argv holds them in the ANSI code
-        page, where "São" is not valid UTF-8 and breaks the JSON sent to the model, so they are read again as
-        UTF-16. Empty if that fails.
-    */
+     * The command-line arguments from `first` on, as UTF-8, joined by spaces. Empty if that fails.
+     *
+     * WARNING: argv holds them in the ANSI code page, where "São" is not valid UTF-8 and breaks the JSON sent
+     * to the model, so they are read again as UTF-16.
+     */
     static std::string Utf8Arguments(int first) {
         int count = 0;
         LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count);
@@ -97,10 +99,11 @@ private:
     }
 
     /*
-        Like bash (\) and PowerShell (`):
-            A line whose last character is the terminator continues on the next one. 
-            It must be the very last character, so "C:\ " with a trailing space stays one line.
-    */
+     * Like bash (\) and PowerShell (`): a line whose last character is the continuation character continues
+     * on the next one.
+     *
+     * NOTE: it must be the very last character, so "C:\ " with a trailing space stays one line.
+     */
     static bool StripContinuation(std::string& line) {
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();

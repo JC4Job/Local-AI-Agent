@@ -20,10 +20,10 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 /*
-    A native window with a Direct3D 11 swap chain and a Dear ImGui context: the platform plumbing only.
-    What is drawn in each frame is up to the callback given to Run(). Adapted from ImGui's
-    examples/example_win32_directx11.
-*/
+ * A native window with a Direct3D 11 swap chain and a Dear ImGui context: the platform plumbing only.
+ * What is drawn in each frame is up to the callback given to Run(). Adapted from ImGui's
+ * examples/example_win32_directx11.
+ */
 class GuiHost {
 public:
     GuiHost() = default;
@@ -75,9 +75,9 @@ public:
     }
 
     /*
-        Runs the message loop until the window is closed, calling draw_frame between ImGui::NewFrame()
-        and ImGui::Render() once per displayed frame.
-    */
+     * Runs the message loop until the window is closed, calling draw_frame between ImGui::NewFrame()
+     * and ImGui::Render() once per displayed frame.
+     */
     void Run(const std::function<void()>& draw_frame) {
         for (;;) {
             MSG msg;
@@ -135,9 +135,11 @@ private:
     float                   scale_       = 1.0f;
 
     /*
-        Segoe UI reads better than ImGui's built-in bitmap font and has the accents, dashes and curly quotes
-        models write. The ranges must outlive the font atlas build, hence static.
-    */
+     * Segoe UI reads better than ImGui's built-in bitmap font and has the accents, dashes and curly quotes
+     * models write.
+     *
+     * WARNING: the ranges must outlive the font atlas build, hence static.
+     */
     void LoadFont(ImGuiIO& io) const {
         static const ImWchar ranges[] = {
             0x0020, 0x00FF,  // Basic Latin, Latin-1 (á, ç, ã...)

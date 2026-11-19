@@ -13,9 +13,8 @@ agent_name = Sof_IA
 # --- Models (all local, in Ollama) ---
 # The chat model needs Ollama's 'tools' capability (check with: ollama show <model>).
 # Be carefull about the models some of them are too short for this model.
-model = llama3.1:8b
+model = llama3.2
 endpoint = http://127.0.0.1:11434/api/chat
-
 # Embedding model for search by meaning; leave empty for keyword search only.
 embed_model = bge-m3
 embed_num_ctx = 1024
@@ -56,10 +55,13 @@ workspace_dir = ..\workspace
 # script in C:\tools", "crie um arquivo"): the searches are left out for it (in a task, for the whole run),
 # so the model goes straight to write_file and execute_code instead of searching first. Leave a list empty
 # to turn this off.
-file_task_actions = create, write, save, make, generate, edit, run, execute, crie, criar, cria, escreva, escrever, salve, salvar, gere, gerar, faça, fazer, edite, editar, rode, rodar, executar
-file_task_objects = file, files, script, scripts, folder, directory, program, py, ps1, bat, cmd, txt, csv, json, arquivo, arquivos, pasta, diretório, diretorio, programa
+file_task_actions = create, write, save, make, generate, edit, modify, append, mkdir, crie, criar, cria, escreva, escrever, salve, salvar, gere, gerar, faça, fazer, edite, editar, modifique, modificar, adicione, adicionar, delete, remove, erase, del, rm, rmdir, clean, clear, wipe, delete, deletar, apague, apagar, apaga, exclua, excluir, exclui, remova, remover, limpe, limpar, move, rename, copy, list, read, show, open, run, execute, mova, mover, renomeie, renomear, copie, copiar, liste, listar, leia, ler, mostre, mostrar, abra, abrir, rode, rodar, executar
+file_task_objects = file, files, folder, folders, directory, directories, dir, path, workspace, arquivo, arquivos, pasta, pastas, diretório, diretorio, diretórios, diretorios, caminho, script, scripts, program, programa, code, código, codigo, py, ps1, bat, cmd, sh, txt, md, csv, json, xml, yaml, yml, log, ini, cfg, cpp, h, hpp, js, ts, html, css
 # ...unless the message also has one of these words, or asks for the internet: then the searches stay.
 search_words = search, knowledge, pesquise, pesquisar, pesquisa, busque, buscar, procure, procurar, conhecimento
+# A message with one of these words asks to delete a file: write_file then does not empty a file that
+# exists (a small model "deletes" that way), it tells the model to call delete_file.
+file_delete_actions = delete, remove, erase, del, rm, rmdir, wipe, deletar, apague, apagar, apaga, exclua, excluir, exclui, remova, remover
 
 # --- Text the model reads ---
 # The directives: which tool for which request and how to answer. Factory copies in defaults\.
@@ -82,6 +84,7 @@ web_max_result_chars = 6000
 
 # Tool descriptions (one line each).
 tool_write_file = Creates or replaces a text file with the content given, creating its folders, and returns its full path. Use it to create or save a script, a program, a text or any other file. It does not run anything. A path without a folder puts the file in the workspace folder. Writing outside the workspace folder, or a script with code that could do harm, happens only if the user allows it.
+tool_delete_file = Deletes one file, or an empty folder. Use it when the user asks to delete, remove or erase a file. write_file cannot delete a file. A path without a folder is a file in the workspace folder. It happens only if the user allows it.
 tool_execute_code = Runs code or a command on the local Windows machine now and returns its exit code, stdout and stderr. It does not save the code: to create a file, use write_file. To run a saved file, give the command that runs it, such as: python hello.py. Languages: python, powershell, cmd. It runs in the workspace folder. Limits: 10 s, 512 MB, no stdin, output capped at 16 KB per stream. Code that deletes or writes files, installs software, changes settings or uses the network runs only if the user allows it.
 tool_search_knowledge_base = Searches all the documents the user saved and returns the few passages that best match, each with its document name and page. Use it for questions about facts, people, events or the user's documents, before search_internet unless the user asked for the internet. Not for creating or running files, and not for greetings or small talk.
 tool_search_internet = Searches the web and returns the best results: title, address, date when known, and the text of the top pages that is about the query. Pages can be old: check the date before calling a value current. Call it directly when the user asks to search the internet, the web, online or Wikipedia; otherwise only after search_knowledge_base found nothing on the subject. Not for creating or running files.

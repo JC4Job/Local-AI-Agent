@@ -30,7 +30,7 @@
 
 #include <nlohmann/json.hpp>
 
-// Outside RagIndex because GCC rejects a nested struct with member initializers used as a default argument.
+// WARNING: outside RagIndex because GCC rejects a nested struct with member initializers as a default argument.
 struct RagConfig {
     std::string knowledge_dir;              // the JSON documents scripts/reader.py writes
     std::string index_path;                 // where the passages and their vectors are saved between runs
@@ -46,42 +46,42 @@ struct RagConfig {
     unsigned    embed_timeout_ms  = 600000;  // one request while embedding
     unsigned    query_timeout_ms  = 15000;   // embedding the query; past it, that search uses keywords only
     /*
-        Measured with bge-m3 on these documents: relevant passages score 0.43-0.68 against their query, unrelated
-        queries (a cake recipe, a capital city, gibberish) at most 0.37. Retune these for another model.
-    */
+     * Measured with bge-m3 on these documents: relevant passages score 0.43-0.68 against their query, unrelated
+     * queries (a cake recipe, a capital city, gibberish) at most 0.37.
+     *
+     * WARNING: retune these for another embedding model: its similarity scores fall in a different range.
+     */
     double      min_similarity    = 0.40;    // meaning: passages less similar to the query are left out...
     double      similarity_margin = 0.12;    // ...and so are those this far below the most similar one
 };
 
 /*
-    Retrieval for the knowledge base: the model reads only the passages that answer the question, never the
-    documents themselves.
-
-    1000 documents of ~14k tokens are ~14M tokens, and the model's context is 8192.
-
-    So each document is cut into passages of ~1000 characters, and a search returns the few passages that best
-    match the question within a fixed budget (max_result_chars).
-
-    The context a search uses is the same for 10 documents or 10000.
-
-    Two rankings, merged by reciprocal rank fusion:
-    - Keywords: BM25 over words that are lowercased, stripped of accents and lightly stemmed (Portuguese and
-      English plurals), so "transformações digitais" finds "transformação digital". A document's name counts
-      as words of each of its passages. Best for names, numbers and codes.
-    - Meaning: each passage has a vector from a local embedding model (bge-m3 through Ollama), compared with the
-      query's vector. Finds passages that say the same thing in other words, or in another language.
-
-    Embedding is slow on a laptop (~1.6 passages per second with bge-m3: hours for 1000 documents), so it is
-    not part of Sync(). EmbedPending() embeds the passages that have no vector yet, saving as it goes; run it
-    as a batch job (agent.exe --index). Until a passage has its vector, it is found by keywords only. Without
-    an embedding model, or with Ollama down, search falls back to keywords alone.
-
-    The passages and vectors are saved in index_path, so a restart does not parse every JSON document again.
-    Sync() parses only the documents added or changed since the last run and drops the removed ones; with
-    nothing changed it only reads each file's size and date. The word index is built in memory at load.
-
-    Not thread-safe: use an instance from one thread at a time.
-*/
+ * RagIndex - retrieval for the knowledge base: the model reads only the passages that answer the question,
+ * never the documents themselves.
+ *
+ * 1000 documents of ~14k tokens are ~14M tokens, far beyond the model's context (num_ctx). So each document is
+ * cut into passages of ~1000 characters, and a search returns the few passages that best match the question
+ * within a fixed budget (max_result_chars). The context a search uses is the same for 10 documents or 10000.
+ *
+ * Two rankings, merged by reciprocal rank fusion:
+ *
+ *   - Keywords: BM25 over words that are lowercased, stripped of accents and lightly stemmed (Portuguese and
+ *     English plurals), so "transformações digitais" finds "transformação digital". A document's name counts
+ *     as words of each of its passages. Best for names, numbers and codes.
+ *   - Meaning: each passage has a vector from a local embedding model (bge-m3 through Ollama), compared with
+ *     the query's vector. Finds passages that say the same thing in other words, or in another language.
+ *
+ * The passages and vectors are saved in index_path, so a restart does not parse every JSON document again.
+ * Sync() parses only the documents added or changed since the last run and drops the removed ones; with
+ * nothing changed it only reads each file's size and date. The word index is built in memory at load.
+ *
+ * WARNING: embedding is slow on a laptop (~1.6 passages per second with bge-m3: hours for 1000 documents), so
+ * it is not part of Sync(). EmbedPending() embeds the passages that have no vector yet, saving as it goes; run
+ * it as a batch job (agent.exe --index). Until a passage has its vector, it is found by keywords only. Without
+ * an embedding model, or with Ollama down, search falls back to keywords alone.
+ *
+ * WARNING: not thread-safe: use an instance from one thread at a time.
+ */
 class RagIndex {
 public:
     using Config = RagConfig;
@@ -174,10 +174,10 @@ public:
     }
 
     /*
-        Brings the passages up to date with the knowledge folder; the first call also loads the saved index.
-        Passages of new or changed documents have no vector until EmbedPending().
-        Throws std::runtime_error when the folder cannot be listed.
-    */
+     * Brings the passages up to date with the knowledge folder; the first call also loads the saved index.
+     * Passages of new or changed documents have no vector until EmbedPending().
+     * Throws std::runtime_error when the folder cannot be listed.
+     */
     SyncReport Sync(const ProgressHandler& progress = nullptr) {
         const auto start = std::chrono::steady_clock::now();
         if (!loaded_) {
@@ -230,10 +230,10 @@ public:
     }
 
     /*
-        Gives a vector to the passages that have none, `limit` at most (0: all of them), in batches of
-        embed_batch. Progress is saved every few minutes and at the end, so an interrupted run loses little, and
-        the next one continues where it stopped. `cancel`, when set, stops it after the current batch.
-    */
+     * Gives a vector to the passages that have none, `limit` at most (0: all of them), in batches of
+     * embed_batch. Progress is saved every few minutes and at the end, so an interrupted run loses little, and
+     * the next one continues where it stopped. `cancel`, when set, stops it after the current batch.
+     */
     EmbedReport EmbedPending(size_t limit = 0, const ProgressHandler& progress = nullptr,
                              const std::atomic<bool>* cancel = nullptr) {
         const auto start = std::chrono::steady_clock::now();
@@ -410,9 +410,9 @@ private:
         uint32_t            terms = 0;                      // indexed words, for BM25's length normalization
         std::string         text;
         /*
-            The embedding, normalized to length 1 and stored as int8: the value of vec[i] is vec[i] * scale.
-            A quarter of the memory of floats, and the ranking it gives is practically the same.
-        */
+         * The embedding, normalized to length 1 and stored as int8: the value of vec[i] is vec[i] * scale.
+         * A quarter of the memory of floats, and the ranking it gives is practically the same.
+         */
         std::vector<int8_t> vec;
         float               scale = 0;  // 0: no vector yet
     };
@@ -428,9 +428,11 @@ private:
     };
 
     /*
-        The window runs several agents at once, each with a RagIndex of the same file. Save() writes through one
-        temporary file per process, so the file is read and written by one of them at a time.
-    */
+     * Lets one RagIndex at a time read or write the index file in this process.
+     *
+     * WARNING: the window runs several agents at once, each with a RagIndex of the same file, and Save() writes
+     * through one temporary file per process: without this lock two agents would write the same temporary file.
+     */
     static std::mutex& FileMutex() {
         static std::mutex mu;
         return mu;
@@ -443,7 +445,7 @@ private:
     static constexpr size_t   kMaxQueryTerms = 64;
     static constexpr int      kSaveEveryMinutes = 5;
     static constexpr uint32_t kMagic   = 0x58444952;  // "RIDX"
-    static constexpr uint32_t kVersion = 2;           // bump when the passage splitting or the file layout changes
+    static constexpr uint32_t kVersion = 2;           // WARNING: bump when the passage splitting or file layout changes
     static constexpr uint32_t kMaxStringBytes = 64u << 20;
     static constexpr uint32_t kMaxDim         = 1u << 16;
 
@@ -536,10 +538,10 @@ private:
     bool SearchesByMeaning() const { return CanEmbed() && dim_ > 0; }
 
     /*
-        Cosine similarity to the query over every passage with a vector. Best first, `pool` at most, without
-        those below min_similarity or too far below the best. Empty, with `warning` set, when the query cannot
-        be embedded (Ollama down, model missing, timeout).
-    */
+     * Cosine similarity to the query over every passage with a vector. Best first, `pool` at most, without
+     * those below min_similarity or too far below the best. Empty, with `warning` set, when the query cannot
+     * be embedded (Ollama down, model missing, timeout).
+     */
     std::vector<std::pair<uint32_t, float>> RankByMeaning(const std::string& query, size_t pool,
                                                           std::string& warning) const {
         std::vector<std::pair<uint32_t, float>> ranked;
@@ -681,9 +683,9 @@ private:
     }
 
     /*
-        New list of documents: unchanged ones keep their passages and vectors, the others are parsed again. A
-        changed document's passages that are still the same, word for word, keep their vectors (KeepVectors).
-    */
+     * New list of documents: unchanged ones keep their passages and vectors, the others are parsed again. A
+     * changed document's passages that are still the same, word for word, keep their vectors (KeepVectors).
+     */
     void Rebuild(const std::vector<Source>& sources, const std::vector<int64_t>& reuse, SyncReport& report) {
         std::vector<Document> docs;
         std::vector<Chunk>    chunks;
@@ -739,11 +741,13 @@ private:
     }
 
     /*
-        Gives the passages of a document just parsed again (`doc`, its passages at the end of `chunks`) the
-        vectors its previous version (`old`) had for the same text. What is embedded is the document's name and
-        the passage, so this holds only while the name is the same. A change to a document's metadata, or to
-        one of its pages, then costs the embedding of the passages that changed, not of the whole document.
-    */
+     * Gives the passages of a document just parsed again (`doc`, its passages at the end of `chunks`) the
+     * vectors its previous version (`old`) had for the same text. A change to a document's metadata, or to one
+     * of its pages, then costs the embedding of the passages that changed, not of the whole document.
+     *
+     * WARNING: what is embedded is the document's name and the passage, so this holds only while the name is
+     * the same.
+     */
     void KeepVectors(const Document& old, const Document& doc, std::vector<Chunk>& chunks) const {
         if (dim_ == 0 || old.name != doc.name) {
             return;
@@ -796,11 +800,11 @@ private:
     }
 
     /*
-        Packs the document's lines, with runs of spaces collapsed (PDF text is full of them), into passages of
-        up to chunk_chars. Each passage after the first starts with the last overlap_chars of the one before, cut
-        at a word, so a sentence split at a boundary is still whole in one of them. reader.py's
-        "--- Page N ---" lines are not kept as text; they give each passage its pages.
-    */
+     * Packs the document's lines, with runs of spaces collapsed (PDF text is full of them), into passages of
+     * up to chunk_chars. Each passage after the first starts with the last overlap_chars of the one before, cut
+     * at a word, so a sentence split at a boundary is still whole in one of them. reader.py's
+     * "--- Page N ---" lines are not kept as text; they give each passage its pages.
+     */
     void SplitIntoPassages(const std::string& content, uint32_t doc_index, std::vector<Chunk>& out) const {
         const size_t limit   = std::max<size_t>(config_.chunk_chars, 200);
         const size_t piece   = limit / 2;  // longest piece of a line; with the overlap, a passage stays <= limit
@@ -925,7 +929,7 @@ private:
         return space == std::string::npos ? std::string() : text.substr(space + 1);
     }
 
-    // Cuts at a character boundary: a split multi-byte character would make the JSON payload invalid.
+    // WARNING: cut at a character boundary only: a split multi-byte character makes the JSON payload invalid.
     static std::string Utf8Prefix(const std::string& s, size_t max_bytes) {
         if (s.size() <= max_bytes) {
             return s;
@@ -998,9 +1002,11 @@ private:
     }
 
     /*
-        Calls emit(std::string&&) for each indexed word of text: lowercased, accents removed, stopwords
-        dropped, stemmed. The same function reads documents and queries, so both sides always agree.
-    */
+     * Calls emit(std::string&&) for each indexed word of text: lowercased, accents removed, stopwords
+     * dropped, stemmed.
+     *
+     * WARNING: documents and queries must both go through this one function, so both sides always agree.
+     */
     template <class Emit>
     static void ForEachTerm(const std::string& text, Emit&& emit) {
         std::string word;
@@ -1094,9 +1100,10 @@ private:
     }
 
     /*
-        Light stemmer for Portuguese and English: mostly plurals, so singular and plural forms meet.
-        Not linguistically exact, but documents and queries go through the same rules.
-    */
+     * Light stemmer for Portuguese and English: mostly plurals, so singular and plural forms meet.
+     *
+     * NOTE: not linguistically exact, but documents and queries go through the same rules, so they still meet.
+     */
     static void Stem(std::string& w) {
         auto ends = [&](const char* suffix) {
             const size_t n = std::char_traits<char>::length(suffix);
@@ -1153,15 +1160,17 @@ private:
 
     // ---- Index file ------------------------------------------------------------------------------------
     /*
-        Little-endian, written by this machine for this machine:
-            u32 magic, u32 version, u32 chunk_chars, u32 overlap_chars, str embed_model, u32 dim,
-            u32 doc_count, u32 chunk_count
-            doc_count   x { str path, str name, u64 size, u64 mtime, u32 first_chunk, u32 chunk_count }
-            chunk_count x { u32 doc, u32 page_first, u32 page_last, str text, f32 scale, dim x i8 if scale != 0 }
-            u32 magic   (a file cut short does not end with it)
-        str is u32 byte count + UTF-8 bytes. A file that does not match is ignored and rebuilt; vectors of another
-        embed_model are dropped and the passages kept.
-    */
+     * Little-endian, written by this machine for this machine:
+     *     u32 magic, u32 version, u32 chunk_chars, u32 overlap_chars, str embed_model, u32 dim,
+     *     u32 doc_count, u32 chunk_count
+     *     doc_count   x { str path, str name, u64 size, u64 mtime, u32 first_chunk, u32 chunk_count }
+     *     chunk_count x { u32 doc, u32 page_first, u32 page_last, str text, f32 scale, dim x i8 if scale != 0 }
+     *     u32 magic   (a file cut short does not end with it)
+     * str is u32 byte count + UTF-8 bytes. A file that does not match is ignored and rebuilt; vectors of another
+     * embed_model are dropped and the passages kept.
+     *
+     * WARNING: a change to this layout must bump kVersion, so old files are rebuilt instead of misread.
+     */
 
     struct Writer {
         std::ofstream& out;
@@ -1219,9 +1228,9 @@ private:
     }
 
     /*
-        Loads the saved passages and vectors; Sync() builds the word index once it knows whether any changed.
-        A missing, old or damaged file leaves the index empty, and Sync() rebuilds it.
-    */
+     * Loads the saved passages and vectors; Sync() builds the word index once it knows whether any changed.
+     * A missing, old or damaged file leaves the index empty, and Sync() rebuilds it.
+     */
     void Load() {
         Reset();
         std::lock_guard<std::mutex> lock(FileMutex());
@@ -1288,9 +1297,9 @@ private:
     }
 
     /*
-        Writes a temporary file and swaps it in, so a crash mid-write never leaves a half-written index.
-        Returns an error message, empty on success.
-    */
+     * Writes a temporary file and swaps it in, so a crash mid-write never leaves a half-written index.
+     * Returns an error message, empty on success.
+     */
     std::string Save() const {
         namespace fs = std::filesystem;
         std::lock_guard<std::mutex> lock(FileMutex());

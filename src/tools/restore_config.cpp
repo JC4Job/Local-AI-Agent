@@ -1,18 +1,20 @@
 /*
-    restore_config.exe: puts the agent's configuration back to the defaults built into the program, for when it
-    is broken (a bad value, a deleted line, a prompt edited into nonsense).
-
-    It writes config\settings.txt with the defaults in src/agent/AgentConfig.hpp, config\system_prompt.txt and
-    config\autonomous_prompt.txt from their factory copies in config\defaults\ (the short prompts built into the
-    program if a copy is missing), and removes this computer's own settings, config\machines\<computer name>.txt,
-    so its values come from settings.txt again. Nothing is lost: every file it replaces or removes is copied first
-    to config\backup\<date and time>\. Other computers' files in config\machines\ are left alone, and so are the
-    agents made in the window (config\agents\), the knowledge base and its index.
-
-    Usage: restore_config.exe          shows what it will do and asks first
-           restore_config.exe --yes    does it without asking (for scripts)
-    Exit code: 0 when the defaults were written, 1 when nothing was changed or it failed, 2 for a wrong option.
-*/
+ * restore_config.exe: puts the agent's configuration back to the defaults built into the program, for when it
+ * is broken (a bad value, a deleted line, a prompt edited into nonsense).
+ *
+ * It writes config\settings.txt with the defaults in src/agent/AgentConfig.hpp, config\system_prompt.txt and
+ * config\autonomous_prompt.txt from their factory copies in config\defaults\ (the short prompts built into the
+ * program if a copy is missing), and removes this computer's own settings, config\machines\<computer name>.txt,
+ * so its values come from settings.txt again.
+ *
+ * NOTE: nothing is lost: every file it replaces or removes is copied first to config\backup\<date and time>\.
+ * Other computers' files in config\machines\ are left alone, and so are the agents made in the window
+ * (config\agents\), the knowledge base and its index.
+ *
+ * Usage: restore_config.exe          shows what it will do and asks first
+ *        restore_config.exe --yes    does it without asking (for scripts)
+ * Exit code: 0 when the defaults were written, 1 when nothing was changed or it failed, 2 for a wrong option.
+ */
 
 #include <algorithm>
 #include <cctype>
@@ -56,8 +58,8 @@ int Restore(bool ask) {
     std::string plan = "Restores the agent's configuration in " + dir.u8string() + " to the defaults:\n"
                        "  writes settings.txt\n";
     const DefaultFile prompts[] = {
-        {"system_prompt.txt",     ChatAgentConfig::kFallbackSystemPrompt},
-        {"autonomous_prompt.txt", ChatAgentConfig::kFallbackAutonomousPrompt},
+        {ChatAgentConfig::kSystemPromptFile,     ChatAgentConfig::kFallbackSystemPrompt},
+        {ChatAgentConfig::kAutonomousPromptFile, ChatAgentConfig::kFallbackAutonomousPrompt},
     };
     for (const DefaultFile& prompt : prompts) {
         std::string text;
@@ -91,7 +93,7 @@ int Restore(bool ask) {
         }
     }
 
-    // The backup comes first, all of it: if one copy fails, nothing is changed.
+    // WARNING: the backup comes first, all of it: if one copy fails, nothing is changed.
     std::vector<fs::path> to_back_up;
     for (const DefaultFile& file : files) {
         if (fs::exists(dir / file.name, ec)) {

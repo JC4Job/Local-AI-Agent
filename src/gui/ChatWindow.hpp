@@ -18,26 +18,30 @@
 #include "llm/OllamaClient.hpp"
 
 /*
-    The chat screen, drawn with Dear ImGui: one tab per agent (AgentTab), and what is no one agent's. It and
-    AgentTab are the only places that know about both the agents and ImGui.
-
-    The first tab is the default agent (config\settings.txt). The + at the end of the tab bar makes another, with
-    its own name, model and instructions (New agent); it is saved as config\agents\<name>.txt and opens again at
-    the next start. Every agent has its own conversation and worker, so they work at the same time. Delete agent,
-    in an agent's tab, removes its file (a copy goes to config\backup\).
-
-    Settings, in the header, opens the settings of the agent in the tab shown: its model, the size of its
-    context and replies, its tool rounds and Run task steps, how much a knowledge base search returns, and, for
-    an agent made in the window, its instructions. The default agent's are every agent's base, saved in this
-    computer's settings file (ChatAgentConfig::SaveMachineSettings) with what is the same for every agent (the
-    embedding context). An agent made in the window saves in its own file only what differs from the default
-    agent's (SaveAgentSettings), so it follows the default agent in the rest. Save gives the new settings to
-    the agents they change, keeping their conversations; Cancel changes nothing. So that no agent is changed
-    under its worker, Settings waits for that agent to finish, and for every agent with the default one.
-
-    Code that an agent wants to run and CLISecurityChecking flags waits in a popup here, one question at a time,
-    naming the agent that asks. It waits while another dialog is open: opening it would close that dialog.
-*/
+ * ChatWindow - the chat screen, drawn with Dear ImGui: one tab per agent (AgentTab), and what is no one agent's.
+ * It and AgentTab are the only places that know about both the agents and ImGui.
+ *
+ * The first tab is the default agent (config\settings.txt). The + at the end of the tab bar makes another, with
+ * its own name, model and instructions (New agent); it is saved as config\agents\<name>.txt and opens again at
+ * the next start. Every agent has its own conversation and worker, so they work at the same time. Delete agent,
+ * in an agent's tab, removes its file (a copy goes to config\backup\).
+ *
+ * Settings, in the header, opens the settings of the agent in the tab shown: its model, the size of its
+ * context and replies, its tool rounds and Run task steps, how much a knowledge base search returns, and, for
+ * an agent made in the window, its instructions. The default agent's are every agent's base, saved in this
+ * computer's settings file (ChatAgentConfig::SaveMachineSettings) with what is the same for every agent (the
+ * embedding context). An agent made in the window saves in its own file only what differs from the default
+ * agent's (SaveAgentSettings), so it follows the default agent in the rest. Save gives the new settings to
+ * the agents they change, keeping their conversations; Cancel changes nothing.
+ *
+ * Code that an agent wants to run and CLISecurityChecking flags waits in a popup here, one question at a time,
+ * naming the agent that asks.
+ *
+ * WARNING: so that no agent is changed under its worker, Settings waits for that agent to finish, and for every
+ * agent when it is the default one.
+ *
+ * WARNING: the confirmation popup waits while another dialog is open: opening it would close that dialog.
+ */
 class ChatWindow {
 public:
     // Opens the default agent and every agent made in the window before (config\agents\).
@@ -134,7 +138,7 @@ private:
         std::string error;      // why the last Create did not create
     };
 
-    // UI thread only.
+    // WARNING: UI thread only.
     std::vector<std::unique_ptr<AgentTab>> tabs_;           // the default agent first; never empty
     size_t                                 current_ = 0;    // the tab shown
     int                                    next_id_ = 1;
@@ -261,11 +265,12 @@ private:
     }
 
     /*
-        The question an agent's worker is waiting on (Session::Confirm), as a modal popup: the rest of the window
-        is locked until the user answers. "Don't run" ("Don't write" for a file) has the keyboard focus, so Enter
-        refuses, and so does Esc.
-        With several agents asking, the popup shows one question at a time, in tab order.
-    */
+     * The question an agent's worker is waiting on (Session::Confirm), as a modal popup: the rest of the window
+     * is locked until the user answers. With several agents asking, the popup shows one question at a time, in
+     * tab order.
+     *
+     * NOTE: "Don't run" ("Don't write" for a file) has the keyboard focus, so Enter refuses, and so does Esc.
+     */
     void DrawConfirmation() {
         AgentTab*  shown   = Find(confirm_tab_);
         const bool showing = ImGui::IsPopupOpen(kConfirmPopup) && shown && shown->WaitingQuestion() == confirm_.id;
@@ -379,11 +384,11 @@ private:
     }
 
     /*
-        The Settings window, as a modal popup, for the agent in the tab shown. Save checks the values, saves them
-        and gives them to the agents they change, from their next message on (SaveSettings); Cancel and Esc close
-        it and change nothing. For an agent made in the window, each number says whether it is the agent's own
-        or the default agent's.
-    */
+     * The Settings window, as a modal popup, for the agent in the tab shown. Save checks the values, saves them
+     * and gives them to the agents they change, from their next message on (SaveSettings); Cancel and Esc close
+     * it and change nothing. For an agent made in the window, each number says whether it is the agent's own
+     * or the default agent's.
+     */
     void DrawSettings() {
         if (open_settings_) {
             ImGui::OpenPopup(kSettingsPopup);
@@ -488,9 +493,9 @@ private:
     }
 
     /*
-        One number of the Settings window, with what it means under it. With `base` (an agent made in the window),
-        also whether it is the agent's own or the default agent's.
-    */
+     * One number of the Settings window, with what it means under it. With `base` (an agent made in the window),
+     * also whether it is the agent's own or the default agent's.
+     */
     static void NumberField(const char* label, int& value, int step, const char* help, const int* base = nullptr) {
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
         ImGui::InputInt(label, &value, step, step * 4);
@@ -504,12 +509,12 @@ private:
     }
 
     /*
-        Checks the Settings window's values with the rules Load() uses and saves them. The default agent's go to
-        this computer's settings file and to every agent, since they are the others' base; an agent made in the
-        window keeps in its file the model, its instructions and only the numbers that differ from the default
-        agent's. Every agent changed then reads its settings back from the files, as at the next start. False,
-        with the reason in settings_.error, when it did not save.
-    */
+     * Checks the Settings window's values with the rules Load() uses and saves them. The default agent's go to
+     * this computer's settings file and to every agent, since they are the others' base; an agent made in the
+     * window keeps in its file the model, its instructions and only the numbers that differ from the default
+     * agent's. Every agent changed then reads its settings back from the files, as at the next start. False,
+     * with the reason in settings_.error, when it did not save.
+     */
     bool SaveSettings(AgentTab& tab) {
         SettingsForm& f = settings_;
         f.model = ui::Trim(f.model);
@@ -606,9 +611,9 @@ private:
     }
 
     /*
-        The New agent window, as a modal popup: a name, a model and instructions. Create saves the agent in
-        config\agents\ and opens its tab; Cancel and Esc close it and make nothing.
-    */
+     * The New agent window, as a modal popup: a name, a model and instructions. Create saves the agent in
+     * config\agents\ and opens its tab; Cancel and Esc close it and make nothing.
+     */
     void DrawNewAgent() {
         if (open_new_agent_) {
             ImGui::OpenPopup(kNewAgentPopup);
@@ -735,9 +740,9 @@ private:
     }
 
     /*
-        Asks before deleting an agent made in the window: Delete removes its file (a copy goes to config\backup\)
-        and closes its tab; Cancel and Esc keep it.
-    */
+     * Asks before deleting an agent made in the window: Delete removes its file (a copy goes to config\backup\)
+     * and closes its tab; Cancel and Esc keep it.
+     */
     void DrawDeleteAgent() {
         if (open_delete_) {
             ImGui::OpenPopup(kDeletePopup);
@@ -767,7 +772,7 @@ private:
         bool close = false;
         ImGui::BeginDisabled(tab->Busy());
         if (ImGui::Button("Delete")) {
-            close = DeleteAgent(delete_id_);  // `tab` is gone when it returns true
+            close = DeleteAgent(delete_id_);  // WARNING: `tab` dangles when it returns true
         }
         ImGui::EndDisabled();
         ImGui::SameLine();

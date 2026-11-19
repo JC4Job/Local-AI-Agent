@@ -1,6 +1,3 @@
-#My main idea was use simple scripts for parse some data and place into a local place with all this information for the AI can search
-#So this reads a PDF and place the metaada with the content of the file.
-#This was my first goal to handle a knowledge of thousands of tokens for the AI to parse the data from documents
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone

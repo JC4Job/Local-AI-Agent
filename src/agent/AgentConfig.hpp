@@ -17,105 +17,155 @@
 #include "sys/Sys.hpp"
 
 /*
-    The agent's settings. Every value written here is a built-in default: at startup, Load() replaces them with
-    what config\settings.txt says, and then with what this computer's own file says,
-    config\machines\<computer name>.txt (the Settings window of agent_gui.exe writes it), so each computer can
-    have its own context and reply sizes. Changing the model or the prompt then takes a restart of the program,
-    not a rebuild. A key the files leave out keeps its default, and without the files the agent runs on the
-    defaults alone.
-
-    The directives the model follows (which tool for which request, how to answer, how to work alone) are not in
-    the code: they are config\system_prompt.txt and, for the autonomous mode, config\autonomous_prompt.txt. Their
-    factory copies are in config\defaults\, read when a prompt file is missing and written back by
-    restore_config.exe (with DefaultSettingsText for settings.txt) when the config is broken. Only when both are
-    missing does the agent use the short prompts built in here (kFallbackSystemPrompt).
-
-    The window can hold several agents. The default one is the above, and its settings are every agent's base;
-    every other is a file made in the window, config\agents\<name>.txt (CreateAgentFile), in the same format,
-    read last, after settings.txt and this computer's file: it names the agent and its model, holds the
-    settings the agent has its own of (its Settings window writes them, SaveAgentSettings), and the text after its
-    --- line is its instructions, added to the system prompt (Load(agent_file)).
-
-    Every path starts at the program's folder, the file system's base path (framework/FileSystem.hpp): the
-    executable's own folder, or the one above it when the executable is in bin\. The config folder is there, and
-    so are the built-in scripts and knowledge base paths, so the searches follow the compiled program wherever the
-    project is copied.
-    run.ps1 reads the same settings.txt, so the models it preloads get the options the agent sends.
-*/
+ * ChatAgentConfig - the agent's settings.
+ *
+ * Every value in the struct is a built-in default. At startup Load() overrides it from these files, in this
+ * order, the last one winning:
+ *
+ *   1. config\settings.txt
+ *   2. config\machines\<computer name>.txt   this computer's own file (Settings window of agent_gui.exe),
+ *                                             so each computer can have its own context and reply sizes
+ *   3. config\agents\<name>.txt               an agent made in the window (CreateAgentFile): its name, its
+ *                                             model, the settings it has its own of (SaveAgentSettings), and
+ *                                             after its --- line the instructions added to its system prompt
+ *
+ * A key the files leave out keeps its default; with no files the agent runs on the defaults alone. Changing
+ * the model or the prompt takes a restart, not a rebuild.
+ *
+ * The directives the model follows (which tool for which request, how to answer, how to work alone) are not in
+ * the code: they are config\system_prompt.txt and config\autonomous_prompt.txt. config\defaults\ holds their
+ * factory copies, read when a prompt file is missing and written back by restore_config.exe (with
+ * DefaultSettingsText() for settings.txt). With neither, the short built-in kFallbackSystemPrompt is used.
+ *
+ * Every path starts at the program's folder (framework/FileSystem.hpp): the executable's folder, or its parent
+ * when the executable is in bin\. The config folder, the scripts and the knowledge base live there, so the
+ * searches follow the compiled program wherever the project is copied.
+ *
+ * NOTE: the default agent's settings are every agent's base. An agent file overrides only the keys it has.
+ *
+ * WARNING: run.ps1 reads the same settings.txt and keeps its own copy of the model and size defaults, so the
+ * models it preloads get the options the agent sends. Change one of those defaults here and change it there
+ * too: Ollama reloads a model whose num_ctx changes, which costs the preload.
+ */
 struct ChatAgentConfig {
-    float       agent_version = 0.001f;  // randomness: 0.0-1.0, 0.2 is a good balance for a chatbot
-    std::string agent_name    = "Sof_IA";
-    std::string endpoint      = "http://127.0.0.1:11434/api/chat";
     /*
-        "gemma:2b", // SHIT DOES NOT WORK, IT'S TOO SMALL FOR THE PROMPT PAYLOADS
-        "qwen2.5:3b",
-    */
-    std::string model         = "llama3.2";
-    /*
-        Ollama's context window, in tokens. The system prompt, the tools, the conversation, the search results and
-        the reply all share it. Ollama's default of 4096 overflows with search results.
-    */
-    int         num_ctx       = 16384;
-    /*
-        The longest reply, in tokens (about 3/4 of a word each). Without a cap, an overflowing reply can run until
-        the HTTP timeout. Kept free of the conversation: the harness shortens old tool results to leave it.
-    */
-    int         num_predict   = 4096;
-    // Local embedding model (in Ollama) for search by meaning; empty: keywords only.
-    std::string embed_model   = "bge-m3";
-    // Passages are ~300 tokens, so 1024 is plenty and leaves more of the small GPU free.
-    int         embed_num_ctx = 1024;
-    // Rounds of tool calls per question before the model is told to answer with what it has.
-    int         max_tool_rounds = 5;
-    // Longest run of execute_code and of the search scripts.
-    unsigned    code_timeout_ms = 10000;
-    /*
-        Autonomous mode (agent.exe --auto, Run task in the window; AutonomousAgent.hpp): the most steps one goal
-        may take. A step is one message the program sends in place of the user, answered with up to
-        max_tool_rounds rounds of tool calls.
-    */
-    int         autonomous_max_steps = 10;
+     * ---- Built-in defaults ----
+     *
+     * Every setting starts with its value here; Load() then overrides it from the settings files. A number
+     * carries the range Set() accepts from a file: {default, min, max}.
+     *
+     * WARNING: a setting added here must also be added to Set() and DefaultSettingsText(). Set() rejects a key
+     * it does not know, so the files could not change it, and restore_config.exe writes settings.txt from
+     * DefaultSettingsText(), so a restored config would not show it.
+     */
+    template <class Number>
+    struct NumberDefault {
+        Number    value;
+        long long min;
+        long long max;
+    };
 
-    // The search scripts, under the program's folder.
-    std::string scripts_dir         = Folder(fileSystem.RelativePathToOSPath("scripts"));
-    // The documents reader.py writes, and the passage index the knowledge base search keeps of them.
-    std::string knowledge_dir       = Folder(fileSystem.RelativePathToOSPath("data\\knowledge"));
-    std::string rag_index           = fileSystem.RelativePathToOSPath("data\\rag\\knowledge.idx").u8string();
+    /*
+     * Shown after the name in the banner (ChatAgent.hpp).
+     *
+     * WARNING: the banner prints it with 2 decimals, so 0.001 shows as "v0.00".
+     */
+    static constexpr float       kAgentVersion = 0.001f;
+    static constexpr const char* kAgentName    = "Sof_IA";
+    static constexpr const char* kEndpoint     = "http://127.0.0.1:11434/api/chat";
+    /*
+     * The chat model. It needs Ollama's 'tools' capability (check with: ollama show <model>).
+     * Also tried: qwen2.5:3b.
+     *
+     * WARNING: gemma:2b does not work: it is too small for the prompt payloads (system prompt, tool schemas
+     * and search results together).
+     */
+    static constexpr const char* kModel        = "llama3.2";
+    // Local embedding model (in Ollama) for search by meaning; empty: keywords only.
+    static constexpr const char* kEmbedModel   = "bge-m3";
+
+    /*
+     * Sizes, in tokens (about 3/4 of a word each).
+     *
+     * num_ctx:       Ollama's context window, shared by the system prompt, the tools, the conversation, the
+     *                search results and the reply.
+     * num_predict:   the longest reply. The harness shortens old tool results to keep this much free.
+     * embed_num_ctx: passages are ~300 tokens, so 1024 is plenty and leaves more of the small GPU free.
+     *
+     * WARNING: do not go back to Ollama's default num_ctx of 4096: search results overflow it.
+     *
+     * WARNING: num_predict must stay below num_ctx (Load() falls back to num_ctx / 4 otherwise). Do not remove
+     * the cap: an overflowing reply then runs until the HTTP timeout.
+     */
+    //                                                              default  min   max
+    static constexpr NumberDefault<int>      kNumCtx             = {16384,   1024, 1 << 20};
+    static constexpr NumberDefault<int>      kNumPredict         = {4096,    64,   1 << 20};
+    static constexpr NumberDefault<int>      kEmbedNumCtx        = {1024,    256,  1 << 16};
+    /*
+     * max_tool_rounds:      rounds of tool calls per question before the model is told to answer with what it
+     *                       has.
+     * code_timeout_ms:      the longest run of execute_code and of the search scripts.
+     * autonomous_max_steps: the most steps one goal may take in autonomous mode (agent.exe --auto, Run task in
+     *                       the window; AutonomousAgent.hpp). A step is one message the program sends in place
+     *                       of the user.
+     *
+     * WARNING: each autonomous step is answered with up to max_tool_rounds rounds of tool calls, so one goal can
+     * cost autonomous_max_steps * max_tool_rounds model calls. On a slow machine a step takes about a minute.
+     */
+    static constexpr NumberDefault<int>      kMaxToolRounds      = {5,       1,    50};
+    static constexpr NumberDefault<unsigned> kCodeTimeoutMs      = {10000,   1000, 3600000};
+    static constexpr NumberDefault<int>      kAutonomousMaxSteps = {10,      1,    500};
     // What one knowledge base search may put in the context.
-    size_t      kb_max_passages     = 6;
-    size_t      kb_max_result_chars = 4000;
+    static constexpr NumberDefault<size_t>   kKbMaxPassages      = {6,       1,    100};
+    static constexpr NumberDefault<size_t>   kKbMaxResultChars   = {4000,    500,  200000};
 
     // A message with one of these words asks for the internet, which is then searched before the knowledge base.
-    std::vector<std::string> internet_words   = {"internet", "online", "wikipedia", "google"};
-    // "web" alone is too common ("web app"); it counts only after one of these words ("the web", "na web").
-    std::vector<std::string> words_before_web = {"the", "on", "na", "da", "pela"};
+    static constexpr const char* kInternetWords[]  = {"internet", "online", "wikipedia", "google"};
+    // NOTE: "web" alone is too common ("web app"): it counts only after one of these ("the web", "na web").
+    static constexpr const char* kWordsBeforeWeb[] = {"the", "on", "na", "da", "pela"};
+    /*
+     * search_internet (scripts\websearch.py).
+     *
+     * web_sources:          tried in order until one has results. None needs a key.
+     * web_pages_to_read:    how many of the top results' pages it reads.
+     * web_max_result_chars: the most text it returns.
+     *
+     * WARNING: the script must end before code_timeout_ms, so it reads the pages in whatever time the search
+     * left. A higher web_pages_to_read only helps if code_timeout_ms leaves time to read them.
+     *
+     * WARNING: tool output is capped at 16 KB, which is why web_max_result_chars stops at 12000.
+     */
+    static constexpr const char*             kWebSources[]       = {"duckduckgo", "bing", "wikipedia"};
+    static constexpr NumberDefault<int>      kWebPagesToRead     = {3,       0,    10};
+    static constexpr NumberDefault<size_t>   kWebMaxResultChars  = {6000,    1000, 12000};
 
     /*
-        search_internet (scripts\websearch.py): the sources it tries, in order, until one has results
-        (duckduckgo, bing, wikipedia: none needs a key); how many of the top results' pages it reads; and the
-        most text it returns (tool output is capped at 16 KB). It must end before code_timeout_ms, so it reads
-        the pages in what is left of that time.
-    */
-    std::vector<std::string> web_sources          = {"duckduckgo", "bing", "wikipedia"};
-    int                      web_pages_to_read    = 3;
-    size_t                   web_max_result_chars = 6000;
+     * Folders and files, relative to the program's folder. A settings file names them relative to the config
+     * folder, hence the ..\ in front there.
+     *
+     * scripts:   the search scripts.
+     * knowledge: the documents reader.py writes.
+     * rag index: the passage index the knowledge base search keeps of them.
+     * workspace: where write_file puts a file named without a full path, and the folder execute_code runs in,
+     *            so the files a script makes with a relative path land there too, not next to the program.
+     *
+     * NOTE: writing a file anywhere outside the workspace asks the user first.
+     */
+    static constexpr const char* kScriptsDir   = "scripts";
+    static constexpr const char* kKnowledgeDir = "data\\knowledge";
+    static constexpr const char* kRagIndex     = "data\\rag\\knowledge.idx";
+    static constexpr const char* kWorkspaceDir = "workspace";
 
     /*
-        Where write_file puts a file named without a full path, and the folder execute_code runs in, so the files a
-        script makes with a relative path land there too, not next to the program. Writing a file anywhere else
-        asks the user first.
-    */
-    std::string workspace_dir = Folder(fileSystem.RelativePathToOSPath("workspace"));
-
-    /*
-        The main problem its that small model really can't controls this operations
-        A message with a word of each of these two lists asks to create, save or run a file ("create a python
-        script in C:\tools", "crie um arquivo na pasta"). The searches are left out for it (in a task, for the
-        whole run), so a small model goes straight to write_file and execute_code instead of searching the
-        knowledge base, then the internet, before doing anything. 
-        An empty list turns this off.
-    */
-    std::vector<std::string> file_task_actions = {
+     * File tasks: a message with a word from each of these two lists asks to create, save or run a file
+     * ("create a python script in C:\tools", "crie um arquivo na pasta"). The search tools are left out for it
+     * (in a task, for the whole run). An empty list turns this off.
+     *
+     * WARNING: a small model cannot control these operations by itself. Given the search tools, it searches
+     * the knowledge base, then the internet, before doing anything; without them it goes straight to
+     * write_file and execute_code.
+     */
+    static constexpr const char* kFileTaskActions[] = {
         // Create / Write / Edit
         "create", "write", "save", "make", "generate", "edit", "modify", "append", "mkdir",
         "crie", "criar", "cria", "escreva", "escrever", "salve", "salvar", "gere", "gerar", "faça", "fazer",
@@ -127,7 +177,7 @@ struct ChatAgentConfig {
         "move", "rename", "copy", "list", "read", "show", "open", "run", "execute",
         "mova", "mover", "renomeie", "renomear", "copie", "copiar", "liste", "listar", "leia", "ler", "mostre", "mostrar", "abra", "abrir", "rode", "rodar", "executar"};
 
-    std::vector<std::string> file_task_objects = {
+    static constexpr const char* kFileTaskObjects[] = {
         // Files & Folders
         "file", "files", "folder", "folders", "directory", "directories", "dir", "path", "workspace",
         "arquivo", "arquivos", "pasta", "pastas", "diretório", "diretorio", "diretórios", "diretorios", "caminho",
@@ -136,35 +186,42 @@ struct ChatAgentConfig {
         // Common Extensions
         "py", "ps1", "bat", "cmd", "sh", "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "ini", "cfg", "cpp", "h", "hpp", "js", "ts", "html", "css"};
     /*
-        A message with one of these words asks to delete a file. Asked to delete one, a small model "deletes" it
-        with write_file and no content, which only empties it, then says it is gone. So in such a message (in a
-        task, for the whole run) write_file does not empty a file that exists: it tells the model to call
-        delete_file. "clean", "clear", "limpe" are not here: emptying a file is what they ask.
-    */
-    std::vector<std::string> file_delete_actions = {
+     * A message with one of these words asks to delete a file. In such a message (in a task, for the whole run)
+     * write_file refuses to empty a file that exists and tells the model to call delete_file instead.
+     *
+     * WARNING: asked to delete a file, a small model "deletes" it with write_file and no content, which only
+     * empties it, then says it is gone. This list is what stops that.
+     *
+     * NOTE: "clean", "clear" and "limpe" are left out on purpose: emptying a file is what they ask.
+     */
+    static constexpr const char* kFileDeleteActions[] = {
         "delete", "remove", "erase", "del", "rm", "rmdir", "wipe",
         "deletar", "apague", "apagar", "apaga", "exclua", "excluir", "exclui", "remova", "remover"};
     /*
-        ...unless the message also has one of these words, or asks for the internet (internet_words): then it
-        needs a search too, and the searches stay. Not "documents": it is in paths (C:\Users\me\Documents).
-    */
-    std::vector<std::string> search_words = {
+     * ...unless the message also has one of these words, or asks for the internet (internet_words): then it
+     * needs a search too, and the search tools stay.
+     *
+     * WARNING: do not add "documents": it is in paths (C:\Users\me\Documents), so every file task there would
+     * keep the search tools.
+     */
+    static constexpr const char* kSearchWords[] = {
         "search", "knowledge", "pesquise", "pesquisar", "pesquisa", "busque", "buscar", "procure", "procurar",
         "conhecimento"};
 
+    // The prompt files, relative to the config folder; config\defaults\ has their factory copies.
+    static constexpr const char* kSystemPromptFile     = "system_prompt.txt";
+    static constexpr const char* kAutonomousPromptFile = "autonomous_prompt.txt";
     /*
-        Only when config\system_prompt.txt and its copy in config\defaults\ are both missing. The real directives
-        are in those files: edit them, no rebuild needed.
-    */
+     * Used only when config\system_prompt.txt and its copy in config\defaults\ are both missing.
+     *
+     * NOTE: the real directives are in those files. Edit them there: no rebuild needed.
+     */
     static constexpr const char* kFallbackSystemPrompt =
         "You are a helpful assistant running on the user's Windows machine.\n"
         "Use a tool only when the message needs it: write_file to create or save a file, delete_file to delete\n"
         "one, execute_code to run something on this machine, search_knowledge_base and search_internet for\n"
         "questions about facts.\n"
         "Never invent quotes, sources, numbers or events.\n";
-
-    std::string system_prompt = kFallbackSystemPrompt;
-
     // Added to the system prompt in autonomous mode. As above: the real one is config\autonomous_prompt.txt.
     static constexpr const char* kFallbackAutonomousPrompt =
         "Autonomous mode:\n"
@@ -172,53 +229,97 @@ struct ChatAgentConfig {
         "the next action with the tool the goal needs. When the goal is done, or cannot be done, call finish\n"
         "with the result.\n";
 
-    std::string autonomous_prompt = kFallbackAutonomousPrompt;
-
     // What the model reads about each tool.
-    std::string tool_write_file =
+    static constexpr const char* kToolWriteFile =
         "Creates or replaces a text file with the content given, creating its folders, and returns its full path. "
         "Use it to create or save a script, a program, a text or any other file. It does not run anything. A path "
         "without a folder puts the file in the workspace folder. Writing outside the workspace folder, or a script "
         "with code that could do harm, happens only if the user allows it.";
-    std::string tool_delete_file =
+    static constexpr const char* kToolDeleteFile =
         "Deletes one file, or an empty folder. Use it when the user asks to delete, remove or erase a file. "
         "write_file cannot delete a file. A path without a folder is a file in the workspace folder. It happens "
         "only if the user allows it.";
-    std::string tool_execute_code =
+    static constexpr const char* kToolExecuteCode =
         "Runs code or a command on the local Windows machine now and returns its exit code, stdout and stderr. "
         "It does not save the code: to create a file, use write_file. To run a saved file, give the command that "
         "runs it, such as: python hello.py. Languages: python, powershell, cmd. It runs in the workspace folder. Limits: 10 s, 512 MB, no stdin, output capped at 16 KB per stream. Code that deletes or "
         "writes files, installs software, changes settings or uses the network runs only if the user allows it.";
-    std::string tool_search_knowledge_base =
+    static constexpr const char* kToolSearchKnowledgeBase =
         "Searches all the documents the user saved and returns the few passages that best match, "
         "each with its document name and page. Use it for questions about facts, people, events or the user's "
         "documents, before search_internet unless the user asked for the internet. Not for creating or running "
         "files, and not for greetings or small talk.";
-    std::string tool_search_internet =
+    static constexpr const char* kToolSearchInternet =
         "Searches the web and returns the best results: title, address, date when known, and the text of the top "
         "pages that is about the query. Pages can be old: check the date before calling a value current. Call it "
         "directly when the user asks to search the internet, the web, online or Wikipedia; otherwise only after "
         "search_knowledge_base found nothing on the subject. Not for creating or running files.";
     // Autonomous mode only.
-    std::string tool_finish =
+    static constexpr const char* kToolFinish =
         "Ends the task. Call it once, when the goal is done or cannot be done. The summary is all the user "
         "reads: put the result itself in it and what was done.";
+
+    /*
+     * ---- The settings ----
+     * Each starts with its built-in default above.
+     */
+    float       agent_version        = kAgentVersion;
+    std::string agent_name           = kAgentName;
+    std::string endpoint             = kEndpoint;
+    std::string model                = kModel;
+    int         num_ctx              = kNumCtx.value;
+    int         num_predict          = kNumPredict.value;
+    std::string embed_model          = kEmbedModel;
+    int         embed_num_ctx        = kEmbedNumCtx.value;
+    int         max_tool_rounds      = kMaxToolRounds.value;
+    unsigned    code_timeout_ms      = kCodeTimeoutMs.value;
+    int         autonomous_max_steps = kAutonomousMaxSteps.value;
+
+    std::string scripts_dir         = Folder(fileSystem.RelativePathToOSPath(kScriptsDir));
+    std::string knowledge_dir       = Folder(fileSystem.RelativePathToOSPath(kKnowledgeDir));
+    std::string rag_index           = fileSystem.RelativePathToOSPath(kRagIndex).u8string();
+    size_t      kb_max_passages     = kKbMaxPassages.value;
+    size_t      kb_max_result_chars = kKbMaxResultChars.value;
+
+    std::vector<std::string> internet_words       = Words(kInternetWords);
+    std::vector<std::string> words_before_web     = Words(kWordsBeforeWeb);
+    std::vector<std::string> web_sources          = Words(kWebSources);
+    int                      web_pages_to_read    = kWebPagesToRead.value;
+    size_t                   web_max_result_chars = kWebMaxResultChars.value;
+
+    std::string              workspace_dir       = Folder(fileSystem.RelativePathToOSPath(kWorkspaceDir));
+    std::vector<std::string> file_task_actions   = Words(kFileTaskActions);
+    std::vector<std::string> file_task_objects   = Words(kFileTaskObjects);
+    std::vector<std::string> file_delete_actions = Words(kFileDeleteActions);
+    std::vector<std::string> search_words        = Words(kSearchWords);
+
+    std::string system_prompt              = kFallbackSystemPrompt;
+    std::string autonomous_prompt          = kFallbackAutonomousPrompt;
+    std::string tool_write_file            = kToolWriteFile;
+    std::string tool_delete_file           = kToolDeleteFile;
+    std::string tool_execute_code          = kToolExecuteCode;
+    std::string tool_search_knowledge_base = kToolSearchKnowledgeBase;
+    std::string tool_search_internet       = kToolSearchInternet;
+    std::string tool_finish                = kToolFinish;
 
     // Which files Load() read, and anything in them it could not use. Shown in the activity log at startup.
     std::vector<std::string> notes;
     // This computer's name and its own settings file (MachineSettingsPath). Set by Load().
     std::string machine_name;
     std::string machine_settings;
-    // An agent made in the window: its file, and its instructions (the text after the file's --- line).
-    // Empty for the default agent.
+    /*
+     * An agent made in the window: its file, and its instructions (the text after the file's --- line).
+     * Empty for the default agent.
+     */
     std::string agent_file;
     std::string instructions;
 
     /*
-        The settings of the default agent or, with `agent_file`, of an agent made in the window. The agent's file
-        is read last, after settings.txt and this computer's file, so any key it has, the context and reply sizes
-        too, takes the place of theirs for that agent; a key it leaves out is the default agent's.
-    */
+     * The settings of the default agent or, with `agent_file`, of an agent made in the window.
+     *
+     * NOTE: the agent's file is read last, after settings.txt and this computer's file, so any key it has (the
+     * context and reply sizes too) overrides theirs for that agent; a key it leaves out is the default agent's.
+     */
     static ChatAgentConfig Load(const std::filesystem::path& agent_file = {}) {
         namespace fs = std::filesystem;
         ChatAgentConfig config;
@@ -296,9 +397,9 @@ struct ChatAgentConfig {
     }
 
     /*
-        Applies one setting as a line of a settings file would, e.g. Apply("num_ctx", "8192"). Returns what is
-        wrong with it, empty when it was applied. The Settings window checks its values with it before saving.
-    */
+     * Applies one setting as a line of a settings file would, e.g. Apply("num_ctx", "8192"). Returns what is
+     * wrong with it, empty when it was applied. The Settings window checks its values with it before saving.
+     */
     std::string Apply(const std::string& key, const std::string& value) {
         PromptFiles prompt_files;  // a prompt file named here would take effect only through Load()
         return Set(key, value, fileSystem.RelativePathToOSPath("config"), prompt_files);
@@ -307,10 +408,10 @@ struct ChatAgentConfig {
     using Values = std::vector<std::pair<std::string, std::string>>;  // (key, value), as a settings file has them
 
     /*
-        Writes `values` into this computer's settings file, so that from the next Load() on they take the place of
-        settings.txt's here, for the default agent and every agent that has no value of its own. Returns what
-        went wrong, empty when saved.
-    */
+     * Writes `values` into this computer's settings file, so that from the next Load() on they take the place of
+     * settings.txt's here, for the default agent and every agent that has no value of its own. Returns what
+     * went wrong, empty when saved.
+     */
     std::string SaveMachineSettings(const Values& values) const {
         if (machine_settings.empty()) {
             return "the settings were not loaded from the config folder, so there is no file for this computer";
@@ -327,10 +428,10 @@ struct ChatAgentConfig {
     }
 
     /*
-        Writes the settings of an agent made in the window into its file: `values` are set, the keys in `follow`
-        taken out, so the agent uses the default agent's value for them from the next Load() on, and the text
-        after the --- line becomes `new_instructions`. Returns what went wrong, empty when saved.
-    */
+     * Writes the settings of an agent made in the window into its file: `values` are set, the keys in `follow`
+     * taken out, so the agent uses the default agent's value for them from the next Load() on, and the text
+     * after the --- line becomes `new_instructions`. Returns what went wrong, empty when saved.
+     */
     std::string SaveAgentSettings(const Values& values, const std::vector<std::string>& follow,
                                   const std::string& new_instructions) const {
         if (agent_file.empty()) {
@@ -351,9 +452,9 @@ struct ChatAgentConfig {
     }
 
     /*
-        Writes `text` with Windows line ends, creating the folders on the way. False if it cannot. For the files
-        Load() reads: the Settings window writes this computer's, restore_config.exe the defaults.
-    */
+     * Writes `text` with Windows line ends, creating the folders on the way. False if it cannot. For the files
+     * Load() reads: the Settings window writes this computer's, restore_config.exe the defaults.
+     */
     static bool WriteTextFile(const std::filesystem::path& path, const std::string& text) {
         std::error_code ec;
         std::filesystem::create_directories(path.parent_path(), ec);
@@ -372,12 +473,14 @@ struct ChatAgentConfig {
     }
 
     /*
-        settings.txt with every key at its built-in default, and the comments that explain them: what
-        restore_config.exe writes. A key added to Set() belongs here too.
-    */
+     * settings.txt with every key at its built-in default, and the comments that explain them: what
+     * restore_config.exe writes.
+     *
+     * WARNING: a key added to Set() must be added here too, or a restored settings.txt leaves it out and the
+     * user never sees it.
+     */
     static std::string DefaultSettingsText() {
         const ChatAgentConfig d;
-        const PromptFiles     files;
         std::ostringstream    out;
         out << "# Agent settings, read when agent.exe / agent_gui.exe starts: after a change, restart the program.\n"
                "# No rebuild needed. run.ps1 reads this file too, so the models it preloads match.\n"
@@ -418,12 +521,12 @@ struct ChatAgentConfig {
                "# slow machine a step takes about a minute.\n"
                "autonomous_max_steps = " << d.autonomous_max_steps << "\n"
                "# Instructions added to the system prompt in this mode.\n"
-               "autonomous_prompt_file = " << files.autonomous << "\n"
+               "autonomous_prompt_file = " << kAutonomousPromptFile << "\n"
                "\n"
                "# --- Folders and files ---\n"
-               "scripts_dir = ..\\scripts\n"
-               "knowledge_dir = ..\\data\\knowledge\n"
-               "rag_index = ..\\data\\rag\\knowledge.idx\n"
+               "scripts_dir = ..\\" << kScriptsDir << "\n"
+               "knowledge_dir = ..\\" << kKnowledgeDir << "\n"
+               "rag_index = ..\\" << kRagIndex << "\n"
                "# What one knowledge base search may put in the context.\n"
                "kb_max_passages = " << d.kb_max_passages << "\n"
                "kb_max_result_chars = " << d.kb_max_result_chars << "\n"
@@ -431,7 +534,7 @@ struct ChatAgentConfig {
                "# --- Files and code ---\n"
                "# Where write_file puts a file given without a full path, and the folder execute_code runs in, so the\n"
                "# files a script makes land there too. Writing a file anywhere else asks you first.\n"
-               "workspace_dir = ..\\workspace\n"
+               "workspace_dir = ..\\" << kWorkspaceDir << "\n"
                "# A message with a word from each of these two lists asks to create, save or run a file (\"create a python\n"
                "# script in C:\\tools\", \"crie um arquivo\"): the searches are left out for it (in a task, for the whole run),\n"
                "# so the model goes straight to write_file and execute_code instead of searching first. Leave a list empty\n"
@@ -446,7 +549,7 @@ struct ChatAgentConfig {
                "\n"
                "# --- Text the model reads ---\n"
                "# The directives: which tool for which request and how to answer. Factory copies in defaults\\.\n"
-               "system_prompt_file = " << files.system << "\n"
+               "system_prompt_file = " << kSystemPromptFile << "\n"
                "\n"
                "# A message containing one of these words asks for the internet, which is then searched before the knowledge base.\n"
                "internet_words = " << JoinWords(d.internet_words) << "\n"
@@ -491,9 +594,9 @@ struct ChatAgentConfig {
     static std::filesystem::path AgentsFolder() { return fileSystem.RelativePathToOSPath("config\\agents"); }
 
     /*
-        Saves a new agent made in the window: config\agents\<name>.txt with its name and model, and its
-        instructions after the --- line. Returns the file, or an empty path with the reason in `error`.
-    */
+     * Saves a new agent made in the window: config\agents\<name>.txt with its name and model, and its
+     * instructions after the --- line. Returns the file, or an empty path with the reason in `error`.
+     */
     static std::filesystem::path CreateAgentFile(const std::string& name, const std::string& model,
                                                  const std::string& instructions, std::string& error) {
         namespace fs = std::filesystem;
@@ -528,9 +631,9 @@ struct ChatAgentConfig {
     }
 
     /*
-        Removes an agent's file, after copying it to config\backup\<date and time>\agents\. Returns what went
-        wrong, empty when it is gone.
-    */
+     * Removes an agent's file, after copying it to config\backup\<date and time>\agents\. Returns what went
+     * wrong, empty when it is gone.
+     */
     static std::string DeleteAgentFile(const std::filesystem::path& path) {
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -549,9 +652,11 @@ struct ChatAgentConfig {
     }
 
     /*
-        The factory copies of the prompt files: config\defaults\system_prompt.txt and autonomous_prompt.txt. Read
-        when config\ has no prompt file, and what restore_config.exe writes back. The program never writes there.
-    */
+     * The factory copies of the prompt files: config\defaults\system_prompt.txt and autonomous_prompt.txt. Read
+     * when config\ has no prompt file, and what restore_config.exe writes back.
+     *
+     * NOTE: the program never writes there, so the factory copies survive a broken config.
+     */
     static std::filesystem::path DefaultsFolder() { return fileSystem.RelativePathToOSPath("config\\defaults"); }
 
     // The factory copy of a prompt file, config\defaults\<name>. False when it is missing or empty.
@@ -570,15 +675,15 @@ struct ChatAgentConfig {
 private:
     // The prompt files settings.txt names, relative to the config folder.
     struct PromptFiles {
-        std::string system      = "system_prompt.txt";
-        std::string autonomous  = "autonomous_prompt.txt";
+        std::string system      = kSystemPromptFile;
+        std::string autonomous  = kAutonomousPromptFile;
     };
 
     /*
-        Applies every line of one settings file: settings.txt, an agent's or this computer's. False when it
-        cannot be read. With `rest` (an agent's file), a --- line ends the settings and the text after it goes to
-        `rest`.
-    */
+     * Applies every line of one settings file: settings.txt, an agent's or this computer's. False when it
+     * cannot be read. With `rest` (an agent's file), a --- line ends the settings and the text after it goes to
+     * `rest`.
+     */
     bool ReadSettings(const std::filesystem::path& path, const std::filesystem::path& dir, PromptFiles& prompt_files,
                       std::string* rest = nullptr) {
         std::string text;
@@ -616,12 +721,12 @@ private:
     }
 
     /*
-        Sets `values` in the settings file at `path` and takes out the keys in `remove`. A key the file has gets
-        its line replaced; a new one goes after the last key, so it stays with the others. Comments and keys
-        written by hand are kept. With `rest` (an agent's file), the settings end at the --- line and the text
-        after it is replaced by `*rest`. `header`: the first lines of a file that does not exist yet. Returns what
-        went wrong, empty when written.
-    */
+     * Sets `values` in the settings file at `path` and takes out the keys in `remove`. A key the file has gets
+     * its line replaced; a new one goes after the last key, so it stays with the others. Comments and keys
+     * written by hand are kept. With `rest` (an agent's file), the settings end at the --- line and the text
+     * after it is replaced by `*rest`. `header`: the first lines of a file that does not exist yet. Returns what
+     * went wrong, empty when written.
+     */
     static std::string WriteSettings(const std::filesystem::path& path, const Values& values,
                                      const std::vector<std::string>& remove, const std::vector<std::string>& header,
                                      const std::string* rest) {
@@ -698,21 +803,21 @@ private:
         } else if (key == "embed_model") {
             embed_model = value;
         } else if (key == "num_ctx") {
-            return SetNumber(value, 1024, 1 << 20, num_ctx);
+            return SetNumber(value, kNumCtx, num_ctx);
         } else if (key == "num_predict") {
-            return SetNumber(value, 64, 1 << 20, num_predict);
+            return SetNumber(value, kNumPredict, num_predict);
         } else if (key == "embed_num_ctx") {
-            return SetNumber(value, 256, 1 << 16, embed_num_ctx);
+            return SetNumber(value, kEmbedNumCtx, embed_num_ctx);
         } else if (key == "max_tool_rounds") {
-            return SetNumber(value, 1, 50, max_tool_rounds);
+            return SetNumber(value, kMaxToolRounds, max_tool_rounds);
         } else if (key == "code_timeout_ms") {
-            return SetNumber(value, 1000, 3600000, code_timeout_ms);
+            return SetNumber(value, kCodeTimeoutMs, code_timeout_ms);
         } else if (key == "autonomous_max_steps") {
-            return SetNumber(value, 1, 500, autonomous_max_steps);
+            return SetNumber(value, kAutonomousMaxSteps, autonomous_max_steps);
         } else if (key == "kb_max_passages") {
-            return SetNumber(value, 1, 100, kb_max_passages);
+            return SetNumber(value, kKbMaxPassages, kb_max_passages);
         } else if (key == "kb_max_result_chars") {
-            return SetNumber(value, 500, 200000, kb_max_result_chars);
+            return SetNumber(value, kKbMaxResultChars, kb_max_result_chars);
         } else if (key == "scripts_dir") {
             scripts_dir = Folder(Resolve(dir, value));
         } else if (key == "knowledge_dir") {
@@ -740,9 +845,9 @@ private:
         } else if (key == "web_sources") {
             web_sources = WordList(value);
         } else if (key == "web_pages_to_read") {
-            return SetNumber(value, 0, 10, web_pages_to_read);
+            return SetNumber(value, kWebPagesToRead, web_pages_to_read);
         } else if (key == "web_max_result_chars") {
-            return SetNumber(value, 1000, 12000, web_max_result_chars);
+            return SetNumber(value, kWebMaxResultChars, web_max_result_chars);
         } else if (key == "tool_write_file") {
             tool_write_file = value;
         } else if (key == "tool_delete_file") {
@@ -761,16 +866,18 @@ private:
         return {};
     }
 
+    // `range`: the setting's built-in default, whose min and max a value must be within.
     template <class Number>
-    static std::string SetNumber(const std::string& value, long long min, long long max, Number& out) {
+    static std::string SetNumber(const std::string& value, const NumberDefault<Number>& range, Number& out) {
         errno = 0;
         char* end = nullptr;
         const long long n = std::strtoll(value.c_str(), &end, 10);
         if (value.empty() || *end != '\0' || errno == ERANGE) {
             return "'" + value + "' is not a whole number";
         }
-        if (n < min || n > max) {
-            return std::to_string(n) + " is out of range (" + std::to_string(min) + " to " + std::to_string(max) + ")";
+        if (n < range.min || n > range.max) {
+            return std::to_string(n) + " is out of range (" + std::to_string(range.min) + " to " +
+                   std::to_string(range.max) + ")";
         }
         out = static_cast<Number>(n);
         return {};
@@ -799,10 +906,16 @@ private:
         return words;
     }
 
+    // A list of built-in defaults, kInternetWords for one, as the vector its setting holds.
+    template <size_t N>
+    static std::vector<std::string> Words(const char* const (&words)[N]) {
+        return std::vector<std::string>(words, words + N);
+    }
+
     /*
-        `name` as a file name: characters Windows does not allow become '_', and the ends lose spaces and dots.
-        Empty when nothing is left, or for a name Windows keeps for a device (CON, NUL, COM1...).
-    */
+     * `name` as a file name: characters Windows does not allow become '_', and the ends lose spaces and dots.
+     * Empty when nothing is left, or for a name Windows keeps for a device (CON, NUL, COM1...).
+     */
     static std::string SafeFileName(const std::string& name) {
         std::string s;
         for (const unsigned char c : name) {
@@ -837,9 +950,9 @@ private:
     }
 
     /*
-        A prompt file named in settings.txt (relative to the config folder) or, when it is missing or empty, its
-        factory copy of the same name in config\defaults\. `from`: the file read. False when neither has text.
-    */
+     * A prompt file named in settings.txt (relative to the config folder) or, when it is missing or empty, its
+     * factory copy of the same name in config\defaults\. `from`: the file read. False when neither has text.
+     */
     static bool ReadPromptFile(const std::filesystem::path& dir, const std::string& name, std::string& text,
                                std::filesystem::path& from) {
         const std::filesystem::path paths[] = {Resolve(dir, name),
@@ -862,7 +975,7 @@ private:
         return p.lexically_normal();
     }
 
-    // The code appends file names to folders, so a folder ends with a backslash.
+    // WARNING: callers append file names straight to a folder, so a folder must end with a backslash.
     static std::string Folder(const std::filesystem::path& p) {
         std::string s = p.u8string();
         if (!s.empty() && s.back() != '\\' && s.back() != '/') {
@@ -871,7 +984,12 @@ private:
         return s;
     }
 
-    // The whole file, without a UTF-8 BOM (Notepad adds one) and with \r\n turned into \n. False if unreadable.
+    /*
+     * The whole file, with \r\n turned into \n. False if unreadable.
+     *
+     * NOTE: a UTF-8 BOM is skipped: Notepad adds one, and left in, it sticks to the first line, which then
+     * reads as an unknown key.
+     */
     static bool ReadTextFile(const std::filesystem::path& path, std::string& text) {
         std::ifstream in(path, std::ios::binary);
         if (!in) {

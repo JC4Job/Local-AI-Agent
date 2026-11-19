@@ -15,10 +15,15 @@
 #include <vector>
 
 /*
-    The main logic its this its used the llm text pattern generation for write codes and other stuff
-    The program use this codes to wrap this into direct calls, for performance
-    no overhead of high level languages.
-*/
+ * CodeExecutor - runs the code the model writes (execute_code) and the search scripts.
+ *
+ * The model generates the code as text; this wraps it into direct Win32 calls (CreateProcess, a job object,
+ * pipes), for performance: no high-level language runtime in between. Each run gets a temp script, a time
+ * limit, a memory cap and a process cap for its whole process tree, and its output back as UTF-8.
+ *
+ * WARNING: the limits contain a runaway script; they are not a sandbox. The code runs as the user, with the
+ * user's files and network: whether it may run is decided before this, by CLISecurityChecking and the user.
+ */
 
 class CodeExecutor {
 public:
@@ -47,9 +52,11 @@ public:
     }
 
     /*
-        `working_dir`: the folder the code runs in, where relative paths in it go; it must exist. Empty: this
-        program's own working folder.
-    */
+     * `working_dir`: the folder the code runs in, where relative paths in it go. Empty: this program's own
+     * working folder.
+     *
+     * WARNING: it must exist: CreateProcess fails otherwise.
+     */
     static ExecutionResult ExecuteCode(const std::string& language, const std::string& code, const Limits& limits,
                                        const std::string& working_dir = {}) {
         ExecutionResult result;
@@ -62,11 +69,11 @@ public:
             launcher  = "python -X utf8 ";
         } else if (lang == "powershell" || lang == "pwsh" || lang == "ps1") {
             extension = ".ps1";
-            content   = "\xEF\xBB\xBF" + code;  // Windows PowerShell 5.1 reads BOM-less scripts as ANSI
+            content   = "\xEF\xBB\xBF" + code;  // WARNING: Windows PowerShell 5.1 reads BOM-less scripts as ANSI
             launcher  = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ";
         } else if (lang == "cmd" || lang == "batch" || lang == "bat") {
             extension = ".cmd";
-            content   = "@echo off\r\n" + ToCrlf(code);  // cmd mis-parses labels in LF-only files
+            content   = "@echo off\r\n" + ToCrlf(code);  // WARNING: cmd mis-parses labels in LF-only files
         } else {
             result.error = "Unsupported language '" + language + "'. Supported: python, powershell, cmd.";
             return result;
@@ -78,9 +85,10 @@ public:
         }
 
         /*
-            chcp first so the child's console, and every tool the script starts, emits UTF-8.
-            /s strips only the outer quotes, so the quoted script path survives intact.
-        */
+         * chcp first so the child's console, and every tool the script starts, emits UTF-8.
+         *
+         * NOTE: /s strips only the outer quotes, so the quoted script path survives intact.
+         */
         const std::string command =
             "cmd.exe /d /s /c \"chcp 65001 >nul & " + launcher + "\"" + Narrow(script) + "\"\"";
 
@@ -109,7 +117,7 @@ public:
             result.error = LastErrorMessage("CreatePipe");
             return result;
         }
-        // Our read ends must not leak into the child, or the pipes never reach EOF.
+        // WARNING: our read ends must not leak into the child, or the pipes never reach EOF.
         SetHandleInformation(out_rd.get(), HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(err_rd.get(), HANDLE_FLAG_INHERIT, 0);
 
@@ -150,7 +158,7 @@ public:
         cmdline.push_back(L'\0');
         const std::wstring dir = Widen(working_dir);
 
-        // Suspended until it is in the job, so no grandchild can be spawned outside the limits.
+        // WARNING: suspended until it is in the job, so no grandchild can be spawned outside the limits.
         PROCESS_INFORMATION pi{};
         if (!CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE,
                             CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, dir.empty() ? nullptr : dir.c_str(),
@@ -160,7 +168,7 @@ public:
         }
         Handle process(pi.hProcess), main_thread(pi.hThread);
 
-        // Drop our copies of the child's ends: EOF arrives once the last process holding them exits.
+        // WARNING: drop our copies of the child's ends: EOF arrives only once the last process holding them exits.
         out_wr.reset();
         err_wr.reset();
         nul_in.reset();
@@ -171,7 +179,7 @@ public:
             return result;
         }
 
-        // Drain both pipes concurrently, or a child that fills a pipe buffer deadlocks.
+        // WARNING: drain both pipes concurrently, or a child that fills a pipe buffer deadlocks.
         const size_t cap = limits.max_output_bytes ? limits.max_output_bytes : std::string::npos;
         PipeReader out_reader(out_rd.get(), cap), err_reader(err_rd.get(), cap);
         PipeReader* readers[2] = {&out_reader, &err_reader};
@@ -195,9 +203,9 @@ public:
         }
 
         /*
-            Kill whatever is left in the tree (the timed-out process, background children it spawned,
-            or the never-resumed process) so every write end closes and the readers finish.
-        */
+         * Kill whatever is left in the tree (the timed-out process, background children it spawned,
+         * or the never-resumed process) so every write end closes and the readers finish.
+         */
         TerminateJobObject(job.get(), 1);
         JoinReaders(threads, readers);
 
@@ -244,7 +252,7 @@ private:
             auto* self = static_cast<PipeReader*>(param);
             char buf[4096];
             DWORD n = 0;
-            // Keeps draining past the cap so the child never blocks on a full pipe.
+            // WARNING: keep draining past the cap, or the child blocks on a full pipe.
             while (!self->stop.load() && ReadFile(self->pipe, buf, sizeof(buf), &n, nullptr)) {
                 const size_t room = self->cap - std::min(self->cap, self->data.size());
                 if (n > room) {
@@ -265,9 +273,9 @@ private:
             }
         }
         /*
-            Immediate in practice: the job is dead, so nothing holds the write ends. Only a handle
-            duplicated into a process outside the job could keep a read blocked; cancel it then.
-        */
+         * Immediate in practice: the job is dead, so nothing holds the write ends. Only a handle
+         * duplicated into a process outside the job could keep a read blocked; cancel it then.
+         */
         DWORD wait = 2000;
         while (count && WaitForMultipleObjects(count, live, TRUE, wait) == WAIT_TIMEOUT) {
             for (PipeReader* r : readers) {
@@ -322,7 +330,7 @@ private:
         return {};
     }
 
-    // Child output is raw bytes; the model JSON needs valid UTF-8.
+    // WARNING: child output is raw bytes, and the JSON sent to the model needs valid UTF-8.
     static std::string NormalizeOutput(std::string s, bool truncated) {
         if (truncated) {
             DropCutUtf8Sequence(s);

@@ -9,45 +9,57 @@
 #include "common/Utils.hpp"
 
 /*
-    Runs the agent on a goal with nobody in the loop. Where ChatAgent answers one message and waits for the next,
-    Run() keeps the model working on the goal, step after step, until it calls the finish tool, stops making
-    progress or runs out of steps.
-
-    One step is one ChatAgent::Ask(): the model acts with its tools (up to max_tool_rounds rounds), then writes a
-    note on what it did. Run() answers the note with the next step's message, so the program, not a person, keeps
-    the conversation going. The conversation grows as in a chat, and the harness shortens the results of earlier
-    steps when it nears the context limit.
-
-    A small model drifts in a long loop, so the stopping rules are enforced here, not left to the prompt:
-    - finish is registered as a final tool: calling it ends the run at once, without another call to the model.
-      A finish without a summary is refused; if the model then writes its result as a reply instead of calling
-      finish again, that reply ends the run as the summary. Going on would restate the goal, and the model would
-      do it all over again.
-    - A small model does not call finish when the goal is done: it ends the step with a note, and the next step's
-      message, which restates the goal, sent it to do the whole work again (in another folder) until the steps ran
-      out. So after a step whose tools did something, Run() asks whether the goal is done, offering finish as the
-      only tool, so the model cannot start the work over while it answers (CheckMessage). It calls finish, or
-      writes what is missing, which the next step's message passes on.
-    - A step that does nothing new gets a reminder to act or call finish; two in a row end the run (Stalled), with
-      the last reply as the result. Nothing new is no tool call (small models often write "done" instead of
-      calling finish), or only calls already made in the run (ChatAgent::LastAskRepeats): the same search, which
-      a goal the tools cannot answer sends the model back to every step, or the same file or command again.
-    - Each step's message restates the goal, which a small model loses sight of, and lists what the tools have
-      done so far (ChatAgent::TaskLog), so it does not redo it; the last one says to wrap up.
-    - The search order (the knowledge base first, or the internet first when the goal asks for it) holds for the
-      whole run, not for each step: a step does not have to search the knowledge base again before the internet,
-      and a long goal, which later steps do not restate, keeps its request for the internet. See
-      ChatAgent::ContinueTask.
-    - No reply from the model (Ollama down) ends the run at once: every later step would fail the same way.
-
-    The instructions added to the system prompt are in config\autonomous_prompt.txt; the step limit
-    (autonomous_max_steps) and finish's description (tool_finish) are in config\settings.txt.
-    execute_code runs with the limits it has in a chat (code_timeout_ms, 512 MB), but nobody reads the code
-    before it runs. A goal that asks to create, change, delete or run a file gets no search tools for the whole
-    run (ChatAgent::FindFileTask), so the model does not search the knowledge base and the internet before writing.
-    One that asks to delete keeps write_file from emptying a file in place of deleting it, which a small model
-    does and then reports the file deleted; delete_file deletes it, after the user allows it.
-*/
+ * AutonomousAgent - runs the agent on a goal with nobody in the loop.
+ *
+ * Where ChatAgent answers one message and waits for the next, Run() keeps the model working on the goal, step
+ * after step, until it calls the finish tool, stops making progress or runs out of steps.
+ *
+ * One step is one ChatAgent::Ask(): the model acts with its tools (up to max_tool_rounds rounds), then writes a
+ * note on what it did. Run() answers the note with the next step's message, so the program, not a person, keeps
+ * the conversation going. The conversation grows as in a chat, and the harness shortens the results of earlier
+ * steps when it nears the context limit.
+ *
+ * The instructions added to the system prompt are config\autonomous_prompt.txt; the step limit
+ * (autonomous_max_steps) and finish's description (tool_finish) are in config\settings.txt.
+ *
+ * WARNING: a small model drifts in a long loop, so the stopping rules are enforced here, not left to the
+ * prompt. Each one is here because the model went wrong without it:
+ *
+ *   - finish is a final tool: calling it ends the run at once, without another call to the model. A finish
+ *     without a summary is refused; if the model then writes its result as a reply instead of calling finish
+ *     again, that reply ends the run as the summary. Going on would restate the goal, and the model would do
+ *     it all over again.
+ *
+ *   - A small model does not call finish when the goal is done: it ends the step with a note, and the next
+ *     step's message, which restates the goal, sent it to do the whole work again (in another folder) until
+ *     the steps ran out. So after a step whose tools did something, Run() asks whether the goal is done,
+ *     offering finish as the only tool, so the model cannot start the work over while it answers
+ *     (CheckMessage). It calls finish, or writes what is missing, which the next step's message passes on.
+ *
+ *   - A step that does nothing new gets a reminder to act or call finish; two in a row end the run (Stalled),
+ *     with the last reply as the result. Nothing new means no tool call (small models often write "done"
+ *     instead of calling finish), or only calls already made in the run (ChatAgent::LastAskRepeats): the same
+ *     search, which a goal the tools cannot answer sends the model back to every step, or the same file or
+ *     command again.
+ *
+ *   - Each step's message restates the goal, which a small model loses sight of, and lists what the tools have
+ *     done so far (ChatAgent::TaskLog), so it does not redo it; the last one says to wrap up.
+ *
+ *   - The search order (the knowledge base first, or the internet first when the goal asks for it) holds for
+ *     the whole run, not for each step: a step does not search the knowledge base again before the internet,
+ *     and a long goal, which later steps do not restate, keeps its request for the internet
+ *     (ChatAgent::ContinueTask).
+ *
+ *   - No reply from the model (Ollama down) ends the run at once: every later step would fail the same way.
+ *
+ * WARNING: execute_code runs with the limits it has in a chat (code_timeout_ms, 512 MB), but nobody reads the
+ * code before it runs, except flagged code, which waits for the user (SetConfirmHandler).
+ *
+ * NOTE: a goal that asks to create, change, delete or run a file gets no search tools for the whole run
+ * (ChatAgent::FindFileTask), so the model does not search the knowledge base and the internet before writing.
+ * One that asks to delete keeps write_file from emptying a file in place of deleting it (a small model does
+ * that, then reports the file deleted); delete_file deletes it, after the user allows it.
+ */
 class AutonomousAgent {
 public:
     using ActivityHandler = ChatAgent::ActivityHandler;
@@ -98,7 +110,7 @@ public:
                             [this](const json& args) { return Finish(args); }, /*ends_prompt=*/true);
     }
 
-    // finish captures `this`.
+    // WARNING: not copyable: the finish tool captures `this`.
     AutonomousAgent(const AutonomousAgent&)             = delete;
     AutonomousAgent& operator=(const AutonomousAgent&)  = delete;
 
@@ -106,34 +118,43 @@ public:
     void SetStreamHandler(StreamHandler handler) { agent_.SetStreamHandler(std::move(handler)); }
 
     /*
-        Receives the note the model ends each step with, so a window can keep it once the stream moves on to the
-        next step. The last step's reply is not sent here: it is the run's result (Result::summary). Called on the
-        thread that runs Run(). Do not call while Run() is running.
-    */
+     * Receives the note the model ends each step with, so a window can keep it once the stream moves on to the
+     * next step. The last step's reply is not sent here: it is the run's result (Result::summary).
+     *
+     * WARNING: called on the thread that runs Run(). Do not call this while Run() is running.
+     */
     void SetStepHandler(StepHandler handler) { on_step_ = std::move(handler); }
 
     /*
-        Asks the user before flagged code runs; see ChatAgent::SetConfirmHandler. The run waits for the answer,
-        so a flagged step needs someone there. Without a handler, flagged code is not run.
-    */
+     * Asks the user before flagged code runs; see ChatAgent::SetConfirmHandler. Without a handler, flagged code
+     * is not run.
+     *
+     * WARNING: the run blocks on the answer, so a flagged step needs someone there.
+     */
     void SetConfirmHandler(ChatAgent::ConfirmHandler handler) { agent_.SetConfirmHandler(std::move(handler)); }
 
-    // See ChatAgent::ApplySettings; the autonomous instructions are added again. Do not call while Run() is running.
+    /*
+     * See ChatAgent::ApplySettings; the autonomous instructions are added again.
+     *
+     * WARNING: do not call this while Run() is running.
+     */
     void ApplySettings(ChatAgentConfig config) { agent_.ApplySettings(WithAutonomousPrompt(std::move(config))); }
 
     /*
-        Stops a Run() in progress, from any thread (Ctrl+C, a Stop button). The step under way stops as a chat
-        reply does (a running tool finishes first), and Run() returns Stopped.
-    */
+     * Stops a Run() in progress, from any thread (Ctrl+C, a Stop button). The step under way stops as a chat
+     * reply does (a running tool finishes first), and Run() returns Stopped.
+     */
     void Cancel() {
         stop_ = true;
         agent_.Cancel();
     }
 
     /*
-        Works on `goal` until finish is called or a stopping rule ends the run, in a new conversation. Blocks for
-        the whole run, which on a slow machine takes minutes to hours: call it off the UI thread.
-    */
+     * Works on `goal` until finish is called or a stopping rule ends the run, in a new conversation.
+     *
+     * WARNING: blocks for the whole run, which on a slow machine takes minutes to hours: call it off the UI
+     * thread.
+     */
     Result Run(const std::string& goal) {
         agent_.NewConversation();
         stop_     = false;
@@ -179,10 +200,12 @@ public:
             }
 
             /*
-                The tools did something new, and the step ended with a note rather than finish: ask whether that
-                was the goal, with finish as the only tool. Not after a step whose tools only failed (no path,
-                no code): with nothing done, a small model would answer by finishing.
-            */
+             * The tools did something new and the step ended with a note rather than finish: ask whether that
+             * was the goal, with finish as the only tool.
+             *
+             * WARNING: not after a step whose tools only failed (no path, no code): with nothing done, a small
+             * model would answer by finishing.
+             */
             std::string missing;
             if (idle == Idle::None && agent_.TaskLog() != done_before) {
                 Report("[Autonomous: asking whether the goal is done]");
@@ -227,11 +250,13 @@ private:
     }
 
     /*
-        After a call to the model that wrote `reply`: true when the run is over, with `result` filled in. It is
-        over when finish was called, when Cancel() stopped it, when the model did not reply, or when finish was
-        refused for want of a summary and the model answered the error by writing its result as a reply rather than
-        calling finish again (small models do): it meant to finish, so the reply is the summary.
-    */
+     * After a call to the model that wrote `reply`: true when the run is over, with `result` filled in. It is
+     * over when finish was called, when Cancel() stopped it, when the model did not reply, or when finish was
+     * refused for want of a summary and the model answered by writing its result as a reply.
+     *
+     * NOTE: small models answer a refused finish that way rather than calling finish again. The model meant to
+     * finish, so the reply is the summary.
+     */
     bool Over(Result& result, const std::string& reply) {
         if (finished_) {
             result.outcome = Outcome::Finished;
@@ -275,9 +300,11 @@ private:
     }
 
     /*
-        The question after a step that did something: is the goal done? Sent with finish as the only tool. Like
-        NextStep, it must not contain the words of internet_words.
-    */
+     * The question after a step that did something: is the goal done? Sent with finish as the only tool.
+     *
+     * WARNING: like NextStep, it must not contain the words of internet_words: ChatAgent::ContinueTask would
+     * take them as a request to search the internet first.
+     */
     static std::string CheckMessage(const std::string& goal, const std::string& done) {
         return "Before the next step, check the goal. " + GoalLine(goal) +
                "Done so far, by your tools:\n" + done + "\n"
@@ -286,10 +313,12 @@ private:
     }
 
     /*
-        The message that starts step `step`, with what the tools have done so far (`done`) and what the model said
-        is missing. It must not contain the words of internet_words ("online"...): ChatAgent::ContinueTask would
-        take them as a request to search the internet first.
-    */
+     * The message that starts step `step`, with what the tools have done so far (`done`) and what the model said
+     * is missing.
+     *
+     * WARNING: it must not contain the words of internet_words ("online"...): ChatAgent::ContinueTask would
+     * take them as a request to search the internet first.
+     */
     static std::string NextStep(const std::string& goal, int step, int max_steps, Idle idle, const std::string& done,
                                 const std::string& missing) {
         std::string text = "Step " + std::to_string(step) + " of " + std::to_string(max_steps) + ". " + GoalLine(goal);
@@ -309,9 +338,9 @@ private:
             break;
         case Idle::None:
             /*
-                No word about searches here: said every step, it sent a model working on files back to searching.
-                The repeats are dealt with in OnlyRepeats.
-            */
+             * WARNING: no word about searches here: said every step, it sent a model working on files back to
+             * searching. The repeats are dealt with in OnlyRepeats.
+             */
             if (!missing.empty()) {
                 text += "Still missing, as you said: " + missing + "\n\n";
             }
@@ -327,9 +356,9 @@ private:
     }
 
     /*
-        The finish tool. Without a summary it throws: the model reads the error and can call finish again. If it
-        writes the result as a reply instead, Run() takes that reply as the summary (see finish_refused_).
-    */
+     * The finish tool. Without a summary it throws: the model reads the error and can call finish again. If it
+     * writes the result as a reply instead, Run() takes that reply as the summary (see finish_refused_).
+     */
     std::string Finish(const json& args) {
         auto it = args.find("summary");
         const std::string summary = (it != args.end() && it->is_string()) ? it->get<std::string>() : std::string();

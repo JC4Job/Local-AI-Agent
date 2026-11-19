@@ -1,5 +1,5 @@
 #pragma once
-// Plataform layer
+// Platform layer: the Windows calls the rest of the program goes through.
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -17,14 +17,15 @@ inline std::filesystem::path Sys_EXEPath() {
     const DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
     const DWORD len  = GetModuleFileNameW(nullptr, buffer, size);
     if (len == 0 || len == size) {
-        return {};  // failed, or cut short: a partial path would point somewhere else
+        return {};  // WARNING: failed or cut short: a partial path would point somewhere else
     }
     return std::filesystem::path(std::wstring(buffer, len));
 }
 
 /*
-    The base path: the folder holding config\, scripts\ and data\. 
-*/
+ * The base path: the folder holding config\, scripts\ and data\. That is the executable's folder, or its
+ * parent when the executable is in bin\; the current directory when the executable's path is unknown.
+ */
 inline std::filesystem::path Sys_DefaultBasePath() {
     namespace fs        = std::filesystem;
     const fs::path exe  = Sys_EXEPath();
@@ -65,9 +66,9 @@ inline std::string Sys_MachineName() {
 }
 
 /*
-    True when the console window was opened for this process alone, as when it is started from Explorer: the
-    window closes as soon as the process ends, before anyone can read it.
-*/
+ * True when the console window was opened for this process alone, as when it is started from Explorer: the
+ * window closes as soon as the process ends, before anyone can read it.
+ */
 inline bool Sys_OwnsConsole() {
     DWORD ids[2];
     return GetConsoleProcessList(ids, 2) == 1;

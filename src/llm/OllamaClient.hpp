@@ -24,11 +24,14 @@
 using json = nlohmann::json;
 
 /*
-    Lets another thread stop a request in progress (a Stop button). Cancel() closes the request's handle, which
-    is how WinHTTP aborts a synchronous request: the call blocked on it returns at once with an error, even while
-    still waiting for the first piece of the reply. Ollama stops generating when the connection closes.
-    A cancelled token stays cancelled until Reset(), so a request started after Cancel() is not sent.
-*/
+ * CancelToken - lets another thread stop a request in progress (a Stop button).
+ *
+ * Cancel() closes the request's handle, which is how WinHTTP aborts a synchronous request: the call blocked on
+ * it returns at once with an error, even while still waiting for the first piece of the reply. Ollama stops
+ * generating when the connection closes.
+ *
+ * NOTE: a cancelled token stays cancelled until Reset(), so a request started after Cancel() is not sent.
+ */
 class CancelToken {
 public:
     void Cancel() {
@@ -90,14 +93,16 @@ public:
     using TextHandler = std::function<void(const std::string&)>;
 
     /*
-        The reply is streamed (Ollama's "stream": true): `on_text`, when given, receives each piece of text as the
-        model writes it. The return value is the whole reply, shaped like a non-streamed one:
-        {"message": {"role", "content", "tool_calls"?}, "done_reason", ...}.
-        Streaming also keeps a long reply from timing out: the receive timeout applies to each piece, not to the
-        whole reply, which on a slow machine can take longer than the timeout.
-        Returns {"error": ...} when Ollama reports one, and an empty object when it cannot be reached. A reply cut
-        short (connection lost, error mid-way, `cancel` triggered) has what arrived, with done_reason "interrupted".
-    */
+     * The reply is streamed (Ollama's "stream": true): `on_text`, when given, receives each piece of text as the
+     * model writes it. The return value is the whole reply, shaped like a non-streamed one:
+     * {"message": {"role", "content", "tool_calls"?}, "done_reason", ...}.
+     *
+     * Returns {"error": ...} when Ollama reports one, and an empty object when it cannot be reached. A reply cut
+     * short (connection lost, error mid-way, `cancel` triggered) has what arrived, with done_reason "interrupted".
+     *
+     * NOTE: streaming also keeps a long reply from timing out: the receive timeout applies to each piece, not to
+     * the whole reply, which on a slow machine can take longer than the timeout.
+     */
     json Chat(const std::string& model, const json& messages, const json& tools = json::array(),
               const TextHandler& on_text = nullptr, CancelToken* cancel = nullptr) const {
         json payload = {
@@ -116,7 +121,7 @@ public:
         // One JSON object per line. A read can end mid-line: the rest waits in `pending` for the next read.
         StreamedReply   reply;
         std::string     pending;
-        // replace: an invalid UTF-8 byte (text from a program writing in another code page) must not throw here
+        // WARNING: keep error_handler_t::replace: an invalid UTF-8 byte (another code page) must not throw here
         const std::string body = payload.dump(-1, ' ', false, json::error_handler_t::replace);
         PostRequest(endpoint_url_, body, kDefaultTimeoutMs, [&](const char* data, size_t size) {
             pending.append(data, size);
@@ -134,11 +139,12 @@ public:
     }
 
     /*
-        One vector per input, in the same order, from an embedding model (POST /api/embed on the chat endpoint's
-        server). Returns an error message, empty on success. `options` is sent as given, not the chat options:
-        Ollama reloads a model whose options change, so callers keep them the same from call to call.
-        `timeout_ms` bounds the wait for the reply.
-    */
+     * One vector per input, in the same order, from an embedding model (POST /api/embed on the chat endpoint's
+     * server). Returns an error message, empty on success. `timeout_ms` bounds the wait for the reply.
+     *
+     * WARNING: `options` is sent as given, not the chat options. Ollama reloads a model whose options change,
+     * so callers must keep them the same from call to call.
+     */
     std::string Embed(const std::string& model, const std::vector<std::string>& inputs,
                       std::vector<std::vector<float>>& vectors, const json& options = json::object(),
                       DWORD timeout_ms = kDefaultTimeoutMs) const {
@@ -149,7 +155,7 @@ public:
         }
 
         const std::string url = ServerUrl("/api/embed");
-        // replace: a malformed UTF-8 byte in a document must not throw here
+        // WARNING: keep error_handler_t::replace: a malformed UTF-8 byte in a document must not throw here
         const std::string raw = PerformPostRequest(
             url, payload.dump(-1, ' ', false, json::error_handler_t::replace), timeout_ms);
         if (raw.empty()) {
@@ -186,9 +192,11 @@ public:
     }
 
     /*
-        The models pulled in Ollama (GET /api/tags), by name, sorted. Returns an error message, empty on
-        success. It loads no model, so it answers at once even while another request is generating.
-    */
+     * The models pulled in Ollama (GET /api/tags), by name, sorted. Returns an error message, empty on
+     * success.
+     *
+     * NOTE: it loads no model, so it answers at once even while another request is generating.
+     */
     std::string ListModels(std::vector<std::string>& names, DWORD timeout_ms = 3000) const {
         names.clear();
         const std::string url = ServerUrl("/api/tags");
@@ -318,7 +326,7 @@ private:
 
     // `cancel`: a request stopped on purpose fails too, and there is nothing to report about it.
     static bool Fail(const char* step, const CancelToken* cancel = nullptr) {
-        // WARNING:capture before any I/O can overwrite it
+        // WARNING: capture the error code before any I/O can overwrite it.
         DWORD err = GetLastError();
         if (cancel && cancel->Cancelled()) {
             return false;
@@ -339,10 +347,10 @@ private:
     using DataHandler = std::function<void(const char* data, size_t size)>;
 
     /*
-        Hands the response body to `on_data` piece by piece, as it arrives. False when the request fails, possibly
-        after some pieces were handed over. The receive timeout applies to each wait for data. `cancel`, when
-        given, can stop the request from another thread. `verb`: POST, or GET with an empty payload (ListModels).
-    */
+     * Hands the response body to `on_data` piece by piece, as it arrives. False when the request fails, possibly
+     * after some pieces were handed over. The receive timeout applies to each wait for data. `cancel`, when
+     * given, can stop the request from another thread. `verb`: POST, or GET with an empty payload (ListModels).
+     */
     bool PostRequest(const std::string& target_url, const std::string& json_payload, DWORD receive_timeout_ms,
                      const DataHandler& on_data, CancelToken* cancel = nullptr, const wchar_t* verb = L"POST") const {
         std::wstring url = Widen(target_url);
@@ -382,9 +390,11 @@ private:
         }
 
         /*
-            From here on, `cancel` may close the request handle from another thread. When it did, the handle must
-            not be closed a second time: the guard (destroyed before `request`) takes it out of `request` first.
-        */
+         * From here on, `cancel` may close the request handle from another thread.
+         *
+         * WARNING: when it did, the handle must not be closed a second time: the guard (destroyed before
+         * `request`) takes it out of `request` first. Keep the guard declared after `request`.
+         */
         if (cancel && !cancel->Attach(request.get())) {
             return false;
         }

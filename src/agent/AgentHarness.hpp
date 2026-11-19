@@ -13,10 +13,11 @@
 #include <iostream>
 
 /*
-    Like other providers GPT, Gemini or Claude
-    Shows the elapsed time while the model works, so a long generation doesn't look like a hang.
-    Appears only after the first second and only on a console, and erases itself when done.
-*/
+ * WaitIndicator - shows the elapsed time while the model works, like the GPT, Gemini and Claude clients do,
+ * so a long generation does not look like a hang.
+ *
+ * NOTE: it appears only after the first second and only on a console, and erases itself when done.
+ */
 class WaitIndicator {
 public:
     explicit WaitIndicator(std::string label, bool enabled = true) : label_(std::move(label)) {
@@ -70,11 +71,13 @@ public:
     // Receives one status line at a time (tool dispatched, reply cut off...), with no surrounding newlines.
     using EventHandler  = std::function<void(const std::string&)>;
     /*
-        Receives the model's reply as it is written, a piece at a time. `first` marks the first piece of each call
-        to the model: whatever came before belonged to an earlier call, which ended in tool calls (text a model
-        writes before calling a tool), so it is not part of this reply. The final reply ProcessPrompt returns is
-        the text streamed since the last `first`.
-    */
+     * Receives the model's reply as it is written, a piece at a time. The final reply ProcessPrompt returns is
+     * the text streamed since the last `first`.
+     *
+     * NOTE: `first` marks the first piece of each call to the model. Whatever came before belonged to an earlier
+     * call that ended in tool calls (a model may write text before calling a tool), so it is not part of this
+     * reply.
+     */
     using StreamHandler = std::function<void(const std::string& piece, bool first)>;
 
     // What the last ProcessPrompt did, for a caller that drives the model in a loop (AutonomousAgent).
@@ -92,12 +95,19 @@ public:
     }
 
     /*
-        Without a handler, status goes to the console (and the wait indicator runs there). A GUI installs one
-        to show the status in its window instead. Called on the thread that runs ProcessPrompt.
-    */
+     * Without a handler, status goes to the console (and the wait indicator runs there). A GUI installs one
+     * to show the status in its window instead.
+     *
+     * WARNING: called on the thread that runs ProcessPrompt, not necessarily the UI thread: a handler that
+     * touches UI state must synchronize with it.
+     */
     void SetEventHandler(EventHandler handler) { on_event_ = std::move(handler); }
 
-    // Shows the reply while the model writes it. Called on the thread that runs ProcessPrompt.
+    /*
+     * Shows the reply while the model writes it.
+     *
+     * WARNING: called on the thread that runs ProcessPrompt, like the event handler.
+     */
     void SetStreamHandler(StreamHandler handler) { on_stream_ = std::move(handler); }
 
     // Forgets the conversation and keeps the system prompt.
@@ -109,15 +119,17 @@ public:
     }
 
     /*
-        Rounds of tool calls allowed per prompt. After that the model is asked to answer without tools, so a
-        model that keeps calling tools (the same search again and again) cannot loop forever.
-    */
+     * Rounds of tool calls allowed per prompt. After that the model is asked to answer without tools.
+     *
+     * NOTE: a small model can keep calling tools (the same search again and again); this bound is what stops
+     * it from looping forever.
+     */
     void SetMaxToolRounds(int rounds) { max_tool_rounds_ = rounds > 0 ? rounds : 1; }
 
     /*
-        Tokens the conversation sent to the model may take: Ollama's num_ctx minus the room kept for the reply
-        (num_predict). Above it, the oldest tool results are shortened (see FitContext). 0: never shortened.
-    */
+     * Tokens the conversation sent to the model may take: Ollama's num_ctx minus the room kept for the reply
+     * (num_predict). Above it, the oldest tool results are shortened (see FitContext). 0: never shortened.
+     */
     void SetContextBudget(int tokens) { context_budget_ = tokens > 0 ? static_cast<size_t>(tokens) : 0; }
 
     // The options sent to Ollama with every call (num_ctx, num_predict); see OllamaClient::SetOptions.
@@ -135,18 +147,24 @@ public:
     void SetSystemPrompt(std::string system_prompt) { messages_[0]["content"] = std::move(system_prompt); }
 
     /*
-        Stops the prompt in progress (a Stop button). A call to the model is aborted at once, even before its first
-        word; a tool already running finishes first (within its own time limit) and the remaining ones are skipped.
-        ProcessPrompt then returns what the model had written. Safe to call from any thread.
-    */
+     * Stops the prompt in progress (a Stop button). ProcessPrompt then returns what the model had written.
+     * Safe to call from any thread.
+     *
+     * NOTE: a call to the model is aborted at once, even before its first word, but a tool already running
+     * finishes first (within its own time limit); the remaining ones are skipped.
+     */
     void Cancel() { cancel_.Cancel(); }
 
     /*
-        Registers a native function as a tool.
-        `ends_prompt`: calling the tool ends the prompt (AutonomousAgent's finish). ProcessPrompt returns the tool's
-        result as the reply, without calling the model again; tool calls after it in the same message are not run.
-        A handler that throws does not end the prompt: the model reads the error and can call the tool again.
-    */
+     * Registers a native function as a tool.
+     *
+     * `ends_prompt`: calling the tool ends the prompt (AutonomousAgent's finish). ProcessPrompt returns the
+     * tool's result as the reply without calling the model again; tool calls after it in the same message are
+     * not run.
+     *
+     * NOTE: a handler that throws does not end the prompt: the model reads the error and can call the tool
+     * again.
+     */
     void RegisterTool(const std::string& name, const std::string& description, json parameters, ToolHandler handler,
                       bool ends_prompt = false) {
         tools_schema_.push_back({
@@ -167,17 +185,21 @@ public:
     }
 
     /*
-        Tools left out of the next prompts, until called again: they are not sent to the model, and a call to one
-        (a small model calls what it saw earlier in the conversation) is answered with an error instead of run.
-        ChatAgent leaves the searches out of a file task (create, change, delete or run a file). Empty: every tool.
-    */
+     * Tools left out of the next prompts, until called again: they are not sent to the model, and a call to one
+     * is answered with an error instead of run. ChatAgent leaves the searches out of a file task (create,
+     * change, delete or run a file). Empty: every tool.
+     *
+     * WARNING: leaving a tool out of the schema is not enough. A small model calls what it saw earlier in the
+     * conversation, so a hidden tool must also be refused when called.
+     */
     void SetHiddenTools(std::unordered_set<std::string> names) { hidden_tools_ = std::move(names); }
 
     /*
-        Only these tools for the next prompts, until called again (the hidden ones stay out too); empty: no limit.
-        AutonomousAgent offers only finish when it asks whether the goal is done, so the model cannot start the
-        work over while it answers.
-    */
+     * Only these tools for the next prompts, until called again (the hidden ones stay out too); empty: no limit.
+     *
+     * NOTE: AutonomousAgent offers only finish when it asks whether the goal is done, so the model cannot start
+     * the work over while it answers.
+     */
     void SetOnlyTools(std::unordered_set<std::string> names) { only_tools_ = std::move(names); }
 
     const PromptStats& LastPrompt() const { return last_prompt_; }
@@ -264,19 +286,21 @@ private:
     // When the conversation must shrink, earlier tool results longer than this are cut down to a preview.
     static constexpr size_t         kKeepToolResultChars    = 800;
     static constexpr size_t         kPreviewChars           = 500;
-    // Starts every shortened result, so it is not shortened twice.
+    // WARNING: starts every shortened result; FitContext() looks for it so a result is not shortened twice.
     static constexpr const char*    kShortenedNote          = "[Result of an earlier question, shortened to save context.";
     /*
-        Rough size of a token for the budget. English averages ~4 characters per token and Portuguese a little
-        less (accents take 2 bytes); 3 overestimates, which errs on the safe side.
-    */
+     * Rough size of a token for the budget. English averages ~4 characters per token and Portuguese a little
+     * less (accents take 2 bytes).
+     *
+     * NOTE: 3 overestimates on purpose: shortening a little early is harmless, overflowing the context is not.
+     */
     static constexpr size_t         kBytesPerToken          = 3;
     static constexpr size_t         kTokensPerMessage       = 8;  // role markers the chat template adds around each message
 
     /*
-        Runs the calls in order. True when one of them was a tool registered with ends_prompt: its result is in
-        `final_reply`, and the calls after it are not run.
-    */
+     * Runs the calls in order. True when one of them was a tool registered with ends_prompt: its result is in
+     * `final_reply`, and the calls after it are not run.
+     */
     bool RunToolCalls(const json& tool_calls, std::string& final_reply) {
         std::string ended_by;
         for (const auto& call : tool_calls) {
@@ -289,7 +313,7 @@ private:
             std::string tool_result;
             auto handler = tool_dispatch_.find(fn_name);
             if (cancel_.Cancelled()) {
-                // Every call still gets a result, so the conversation stays well-formed for the next prompt.
+                // WARNING: every call must still get a result, or the conversation is malformed for the next prompt.
                 tool_result = "Not run: the user stopped the reply.";
             } else if (!ended_by.empty()) {
                 tool_result = "Not run: " + ended_by + " was called before it.";
@@ -300,7 +324,7 @@ private:
                               "were given for it.";
                 Notify("[Harness] " + fn_name + " is left out for this request; not run.");
             } else {
-                // A throwing tool must not take down the session; report it to the model instead.
+                // WARNING: a throwing tool must not take down the session; report it to the model instead.
                 try {
                     tool_result = handler->second(fn_args);
                     if (final_tools_.count(fn_name)) {
@@ -308,7 +332,7 @@ private:
                         final_reply = tool_result;
                     }
                 } catch (const std::exception& e) {
-                    // Shown too: only the model read it, so a refused finish looked like one that worked.
+                    // NOTE: shown to the user too: when only the model read it, a refused finish looked like it worked.
                     tool_result = "Error: tool '" + fn_name + "' failed: " + e.what();
                     Notify("[Harness] " + tool_result);
                 }
@@ -324,13 +348,15 @@ private:
     }
 
     /*
-        A small model (llama3.2) sometimes writes a tool call into its reply as text, after a sentence:
-        "Vou tentar com uma busca na internet. {"name": "search_internet", "parameters": {"query": "..."}}".
-        Ollama recognises a call only when the reply starts with it, so this one arrives as plain text and the
-        prompt would end on it with nothing run. When the reply has no tool calls, every JSON object in its text
-        that names a registered tool and gives its arguments becomes a tool call, and the text before the first
-        one stays as the reply's content.
-    */
+     * Turns tool calls a model wrote as text into real ones. When the reply has no tool calls, every JSON object
+     * in its text that names a registered tool and gives its arguments becomes a tool call, and the text before
+     * the first one stays as the reply's content.
+     *
+     * WARNING: a small model (llama3.2) sometimes writes a tool call into its reply as text, after a sentence:
+     * "Vou tentar com uma busca na internet. {"name": "search_internet", "parameters": {"query": "..."}}".
+     * Ollama recognises a call only when the reply starts with it, so without this the prompt would end on
+     * plain text with nothing run.
+     */
     void RecoverTextToolCalls(json& message) const {
         if (message.contains("tool_calls") && !message["tool_calls"].empty()) {
             return;
@@ -403,10 +429,10 @@ private:
     }
 
     /*
-        The tool call written as `text`, shaped as Ollama returns one: {"function": {"name", "arguments"}}.
-        Accepts llama's {"name", "parameters"}, {"name", "arguments"} (arguments as an object or as a JSON string)
-        and Ollama's own {"function": {...}}. Null unless it names a registered tool and its arguments are an object.
-    */
+     * The tool call written as `text`, shaped as Ollama returns one: {"function": {"name", "arguments"}}.
+     * Accepts llama's {"name", "parameters"}, {"name", "arguments"} (arguments as an object or as a JSON string)
+     * and Ollama's own {"function": {...}}. Null unless it names a registered tool and its arguments are an object.
+     */
     json ToolCallFromText(const std::string& text) const {
         const json obj = json::parse(text, nullptr, /*allow_exceptions=*/false);
         if (!obj.is_object()) {
@@ -432,9 +458,9 @@ private:
     }
 
     /*
-        The user stopped the prompt: keeps what the model had written of `response`, closes the turn with it so the
-        next prompt sees a complete exchange, and returns it.
-    */
+     * The user stopped the prompt: keeps what the model had written of `response`, closes the turn with it so the
+     * next prompt sees a complete exchange, and returns it.
+     */
     std::string Stopped(const json& response) {
         std::string partial;
         auto message = response.find("message");
@@ -458,17 +484,22 @@ private:
     }
 
     /*
-        Search results are a few thousand characters each. When the conversation outgrows the context, Ollama
-        silently drops the oldest messages and the model loses what it fetched. So before each call, if the
-        conversation would not fit the budget, the oldest tool results of earlier questions are cut to a preview
-        until it takes three quarters of the budget; the replies that used them stay in full.
-        - Until then nothing is cut, so a follow-up question can still use what earlier searches found.
-        - The current question's results are never cut: the model is reading them.
-        - Cutting several at once, rarely, keeps Ollama's prompt cache useful: it reuses only the unchanged
-          start of the conversation, and every cut changes it from that message on.
-        The full results are still in ChatAgent's ToolResultCache, so calling the tool again is answered from
-        memory without running anything.
-    */
+     * Before each call, when the conversation would not fit the budget, cuts the oldest tool results of earlier
+     * questions to a preview until it takes three quarters of the budget. The replies that used them stay in
+     * full, and the full results are still in ChatAgent's ToolResultCache, so calling the tool again is
+     * answered from memory without running anything.
+     *
+     * WARNING: search results are a few thousand characters each. When the conversation outgrows the context,
+     * Ollama silently drops the oldest messages and the model loses what it fetched. This is what prevents it.
+     *
+     * NOTE: nothing is cut until the budget is reached, so a follow-up question can still use what earlier
+     * searches found.
+     *
+     * NOTE: the current question's results are never cut: the model is reading them.
+     *
+     * NOTE: cutting several at once, rarely, keeps Ollama's prompt cache useful: it reuses only the unchanged
+     * start of the conversation, and every cut changes it from that message on.
+     */
     void FitContext() {
         if (context_budget_ == 0) {
             return;
@@ -513,7 +544,7 @@ private:
         }
     }
 
-    // Cuts at a character boundary: a split multi-byte character would make the JSON payload invalid.
+    // WARNING: cut at a character boundary only: a split multi-byte character makes the JSON payload invalid.
     static std::string Utf8Prefix(const std::string& s, size_t max_bytes) {
         if (s.size() <= max_bytes) {
             return s;

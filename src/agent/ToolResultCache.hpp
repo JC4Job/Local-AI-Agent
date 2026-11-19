@@ -9,21 +9,24 @@
 #include <utility>
 
 /*
-    In-memory results of read-only tool calls (the searches), kept for the whole conversation.
-
-    The model's context is small (8192 tokens), so old tool results are shortened there (see
-    AgentHarness::CompactEarlierToolResults); the full text lives here, and asking for the same search again
-    is answered from memory instead of running the script. Bounded: past `capacity` entries, the least
-    recently used one is dropped. Not thread-safe; used only from the thread running ChatAgent::Ask().
-*/
+ * ToolResultCache - in-memory results of read-only tool calls (the searches), kept for the whole conversation.
+ *
+ * The harness shortens old tool results in the model's context (AgentHarness::FitContext); the full text lives
+ * here, and asking for the same search again is answered from memory instead of running the script. Bounded:
+ * past `capacity` entries, the least recently used one is dropped.
+ *
+ * WARNING: not thread-safe. Use it only from the thread running ChatAgent::Ask().
+ */
 class ToolResultCache {
 public:
     explicit ToolResultCache(size_t capacity = 64) : capacity_(capacity) {}
 
     /*
-        Same key for the same words in any order or case: ("kb", "Alan  Turing") and ("kb", "turing alan")
-        both give "kb:alan turing". Small models reorder and re-case their queries when they retry.
-    */
+     * Same key for the same words in any order or case: ("kb", "Alan  Turing") and ("kb", "turing alan")
+     * both give "kb:alan turing".
+     *
+     * NOTE: small models reorder and re-case their queries when they retry.
+     */
     static std::string MakeKey(const std::string& tool, const std::string& query) {
         std::set<std::string> words;
         std::string word;
@@ -49,7 +52,11 @@ public:
         return key;
     }
 
-    // nullptr when absent. The pointer is valid until the next Store() or Clear().
+    /*
+     * The result kept for `key`; nullptr when absent.
+     *
+     * WARNING: the pointer is valid only until the next Store() or Clear().
+     */
     const std::string* Find(const std::string& key) {
         auto it = index_.find(key);
         if (it == index_.end()) {

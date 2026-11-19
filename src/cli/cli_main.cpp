@@ -1,17 +1,21 @@
 /*
-    Console front end, for scripts and quick tests: `agent.exe "question"`, piped stdin, or an interactive prompt.
-    Same ChatAgent as the window; with no activity handler, tool activity is printed to the console.
-
-    `agent.exe --index` updates the knowledge base index and embeds the passages that have no vector yet. It can
-    take hours the first time; Ctrl+C stops it after the current batch, and the next run continues from there.
-
-    `agent.exe --auto "goal"` works on the goal alone, step after step, until it is done (AutonomousAgent.hpp).
-    Without a goal after --auto, it is read from piped stdin or the console. Ctrl+C stops the run. The exit code
-    is 0 when the model called finish, 1 otherwise.
-
-    Code the agent wants to run that CLISecurityChecking flags as potentially harmful is shown with the reasons,
-    and runs only if the user types yes. With the input piped in there is no one to ask, and it does not run.
-*/
+ * Console front end, for scripts and quick tests: `agent.exe "question"`, piped stdin, or an interactive prompt.
+ * Same ChatAgent as the window; with no activity handler, tool activity is printed to the console.
+ *
+ * `agent.exe --index` updates the knowledge base index and embeds the passages that have no vector yet.
+ * Ctrl+C stops it after the current batch, and the next run continues from there.
+ *
+ * `agent.exe --auto "goal"` works on the goal alone, step after step, until it is done (AutonomousAgent.hpp).
+ * Without a goal after --auto, it is read from piped stdin or the console. Ctrl+C stops the run. The exit code
+ * is 0 when the model called finish, 1 otherwise.
+ *
+ * Code the agent wants to run that CLISecurityChecking flags as potentially harmful is shown with the reasons,
+ * and runs only if the user types yes.
+ *
+ * WARNING: --index can take hours the first time.
+ *
+ * NOTE: with the input piped in there is no one to ask, so flagged code does not run.
+ */
 
 #include <algorithm>
 #include <atomic>
@@ -42,12 +46,12 @@ BOOL WINAPI OnCtrlC(DWORD type) {
 }
 
 /*
-    The console's ConfirmHandler: shows the flagged code (or the file the agent wants to write, and its content,
-    or to delete) and why, and goes ahead only on "yes" (or y, sim, s). Anything else, an empty line or Ctrl+C
-    refuses. 
-    Input piped in cannot answer: the code is not run, the file not written nor deleted.
-    Added a new function that can delete files.
-*/
+ * The console's ConfirmHandler: shows the flagged code (or the file the agent wants to write, and its content,
+ * or to delete) and why, and goes ahead only on "yes" (or y, sim, s). Anything else, an empty line or Ctrl+C
+ * refuses.
+ *
+ * NOTE: input piped in cannot answer: the code is not run, the file not written nor deleted.
+ */
 bool ConfirmAtConsole(const std::string& language, const std::string& code, const CLISecurityChecking::Report& report) {
     const std::string rule(72, '=');
     const bool        file    = !report.file.empty();

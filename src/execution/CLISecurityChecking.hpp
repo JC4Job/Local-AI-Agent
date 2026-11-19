@@ -9,32 +9,36 @@
 #include <vector>
 
 /*
-    Looks at code the agent is about to run (execute_code) for what could harm this computer or the user's data,
-    so that it runs only after the user says yes. Check() returns what it found; ChatAgent then asks the front end
-    (the console in cli_main.cpp, a popup in ChatWindow.hpp) through a ConfirmHandler, and flagged code the user
-    does not allow is not run.
-
-    The rules cover both ecosystems, because commands cross languages: a Python script passes shell commands as
-    strings, PowerShell runs cmd commands, and WSL or Git Bash run Linux commands on Windows.
-    - Windows (cmd, PowerShell): deleting, formatting disks, the registry, accounts, Defender and the firewall,
-      backups and event logs, boot settings, scheduled tasks and services.
-    - Linux (sh, bash): rm -rf, mkfs, dd, sudo, chmod 777, cron, iptables, curl | sh.
-    - Python: shutil.rmtree, os.remove, winreg, exec, the network modules.
-    - Any: downloading and running code, network access (data must not leave this machine), stored passwords and
-      keys, remote access.
-
-    DANGER: could destroy data or the system, weaken its protection, or let someone else in.
-    CAUTION: changes this computer or uses the network; usually recoverable.
-    Both ask the user; the level only says how worried to be.
-
-    This is pattern matching, a guard against a careless model, not a sandbox: code written to hide what it does
-    (a command built from pieces at run time, an unusual alias) can get past it. Code that runs text as code or
-    decodes hidden code is flagged for that reason. Rules err on the side of warning: a false alarm costs the user
-    one answer, a miss can cost their files.
-
-    The command rules read cmd and PowerShell code whole but only the string literals of Python code, so Python's
-    `del x` is not taken for cmd's `del`; the other rules read all of the code.
-*/
+ * CLISecurityChecking - looks at code the agent is about to run (execute_code) for what could harm this computer
+ * or the user's data, so that it runs only after the user says yes.
+ *
+ * Check() returns what it found; ChatAgent then asks the front end (the console in cli_main.cpp, a popup in
+ * ChatWindow.hpp) through a ConfirmHandler, and flagged code the user does not allow is not run.
+ *
+ * The rules cover both ecosystems, because commands cross languages: a Python script passes shell commands as
+ * strings, PowerShell runs cmd commands, and WSL or Git Bash run Linux commands on Windows.
+ *
+ *   - Windows (cmd, PowerShell): deleting, formatting disks, the registry, accounts, Defender and the firewall,
+ *     backups and event logs, boot settings, scheduled tasks and services.
+ *   - Linux (sh, bash): rm -rf, mkfs, dd, sudo, chmod 777, cron, iptables, curl | sh.
+ *   - Python: shutil.rmtree, os.remove, winreg, exec, the network modules.
+ *   - Any: downloading and running code, network access (data must not leave this machine), stored passwords
+ *     and keys, remote access.
+ *
+ * DANGER:  could destroy data or the system, weaken its protection, or let someone else in.
+ * CAUTION: changes this computer or uses the network; usually recoverable.
+ * Both ask the user; the level only says how worried to be.
+ *
+ * The command rules read cmd and PowerShell code whole but only the string literals of Python code, so Python's
+ * `del x` is not taken for cmd's `del`; the other rules read all of the code.
+ *
+ * WARNING: this is pattern matching, a guard against a careless model, not a sandbox. Code written to hide what
+ * it does (a command built from pieces at run time, an unusual alias) can get past it. Code that runs text as
+ * code or decodes hidden code is flagged for that reason.
+ *
+ * NOTE: the rules err on the side of warning: a false alarm costs the user one answer, a miss can cost their
+ * files.
+ */
 class CLISecurityChecking {
 public:
     enum class Severity { Danger, Caution };
@@ -51,9 +55,9 @@ public:
     struct Report {
         std::vector<Finding> findings;  // DANGER first, one per harm
         /*
-            Set when the agent wants to write a file (write_file) rather than run code: its full path. The code
-            given with the report is then the file's content.
-        */
+         * Set when the agent wants to write a file (write_file) rather than run code: its full path. The code
+         * given with the report is then the file's content.
+         */
         std::string          file;
         
         // With `file`: the agent wants to delete that file (delete_file).
@@ -67,10 +71,10 @@ public:
         }
 
         /*
-            One finding per entry, for people:
-                DANGER   deletes whole folders, or files in every subfolder (Windows)
-                         line 2: Remove-Item C:\temp\x -Recurse -Force
-        */
+         * One finding per entry, for people:
+         *     DANGER   deletes whole folders, or files in every subfolder (Windows)
+         *              line 2: Remove-Item C:\temp\x -Recurse -Force
+         */
         std::string Describe() const {
             std::string text;
             for (const Finding& f : findings) {
@@ -101,11 +105,11 @@ public:
     };
 
     /*
-        Asks the user whether flagged code may run, or, when `report.file` is set, whether that file may be written
-        with `code` as its content (deleted, when `report.deletes` is set); true goes ahead. 
-        Called on the thread that runs the agent, which waits for the
-        answer.
-    */
+     * Asks the user whether flagged code may run, or, when `report.file` is set, whether that file may be written
+     * with `code` as its content (deleted, when `report.deletes` is set); true goes ahead.
+     *
+     * WARNING: called on the thread that runs the agent, which waits for the answer.
+     */
     using ConfirmHandler = std::function<bool(const std::string& language, const std::string& code, const Report& report)>;
 
     static const char* SeverityName(Severity severity) {
@@ -113,10 +117,12 @@ public:
     }
 
     /*
-        What in `code` could do harm. `language` as execute_code receives it (python, powershell, cmd...); an
-        unknown one is read like cmd and PowerShell. Thread-safe. Throws std::regex_error only if a rule in the
-        table is malformed, which the harness reports as a tool failure, so the code still does not run.
-    */
+     * What in `code` could do harm. `language` as execute_code receives it (python, powershell, cmd...); an
+     * unknown one is read like cmd and PowerShell. Thread-safe.
+     *
+     * NOTE: throws std::regex_error only if a rule in the table is malformed. The harness reports that as a tool
+     * failure, so the code still does not run.
+     */
     static Report Check(const std::string& language, const std::string& code) {
         const bool              python        = IsPython(language);
         const std::vector<Line> code_lines    = LogicalLines(code);
@@ -164,23 +170,32 @@ private:
         std::string text;
     };
 
-    // Long lines are searched in overlapping pieces: libstdc++'s regex recurses once per character it reads.
+    /*
+     * Long lines are searched in overlapping pieces.
+     *
+     * WARNING: libstdc++'s regex recurses once per character it reads, so one long line would overflow the stack.
+     */
     static constexpr size_t kChunkBytes    = 512;
     static constexpr size_t kChunkStep     = 384;
     static constexpr size_t kEvidenceBytes = 120;
 
     /*
-        On the same line as a system folder, these make it a change rather than a read. ">" is any redirection,
-        so `dir "C:\Program Files" > list.txt` is flagged too: a false alarm, but a cheap one.
-    */
+     * On the same line as a system folder, these make it a change rather than a read.
+     *
+     * NOTE: ">" is any redirection, so `dir "C:\Program Files" > list.txt` is flagged too: a false alarm, but a
+     * cheap one.
+     */
     static constexpr const char* kWriteVerbs = R"~(\b(Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Rename-Item|New-Item|Remove-Item|Clear-Content|copy|xcopy|robocopy|move|ren|rename|del|erase|rd|rmdir|mklink|icacls|takeown|attrib|rm|cp|mv|tee|ln|truncate|dd|touch|mkdir|chmod|chown)\b|\bsed\s+-i\b|>|\bshutil\.(copy\w*|move|rmtree)\b|\bos\.(remove|unlink|rename|replace|rmdir|makedirs|mkdir|chmod)\b|\.write_(text|bytes)\b|\bopen\s*\(.*['"][wax]b?\+?['"])~";
 
     /*
-        The rules, DANGER first. Findings with the same harm text are merged, so rules for the same harm in
-        different ecosystems share it. Patterns use \\+ for path separators: Python source writes "C:\\Windows".
-        This its on track now the main problem its that in the model because of the stream the message does not fully appear
-        WARNING: So this is important for safety does not try crap stuff for now!
-    */
+     * The rules, DANGER first. Findings with the same harm text are merged, so rules for the same harm in
+     * different ecosystems share it. Patterns use \\+ for path separators: Python source writes "C:\\Windows".
+     *
+     * WARNING: this table is what keeps execute_code safe. Do not try risky changes to it for now.
+     *
+     * NOTE: the rules are on track. The open problem is in the model: because of the streaming, its message
+     * does not fully appear.
+     */
     static const std::vector<Rule>& RuleTable() {
         using S = Scope;
         using V = Severity;
@@ -314,11 +329,13 @@ private:
     }
 
     /*
-        One finding per harm: a later line with the same harm is counted in it, and DANGER replaces CAUTION.
-        A line already shown for a DANGER finding gives no CAUTION one: `Remove-Item x -Recurse` is a recursive
-        delete, and saying it also "deletes files" adds nothing. The DANGER rules come first in the table, so they
-        are all known by then.
-    */
+     * One finding per harm: a later line with the same harm is counted in it, and DANGER replaces CAUTION.
+     * A line already shown for a DANGER finding gives no CAUTION one: `Remove-Item x -Recurse` is a recursive
+     * delete, and saying it also "deletes files" adds nothing.
+     *
+     * WARNING: this relies on the DANGER rules coming first in the table, so they are all known by the time a
+     * CAUTION rule matches. Keep them first.
+     */
     static void Add(Report& report, const Rule& rule, int line, const std::vector<std::string>& physical) {
         if (rule.severity == Severity::Caution) {
             for (const Finding& f : report.findings) {
@@ -352,10 +369,10 @@ private:
     }
 
     /*
-        The Python code with everything but the text of its string literals blanked out, line breaks kept:
-        `subprocess.run(["rm", "-rf", "/"])  # tidy` reads `                 rm    -rf    /             `.
-        Escapes stay as written ("C:\\Windows" keeps both backslashes). Line numbers do not change.
-    */
+     * The Python code with everything but the text of its string literals blanked out, line breaks kept:
+     * `subprocess.run(["rm", "-rf", "/"])  # tidy` reads `                 rm    -rf    /             `.
+     * Escapes stay as written ("C:\\Windows" keeps both backslashes). Line numbers do not change.
+     */
     static std::string PythonStrings(const std::string& code) {
         std::string out(code.size(), ' ');
         size_t i = 0;
@@ -413,9 +430,9 @@ private:
     }
 
     /*
-        The lines to search, a line that ends with a continuation character joined to the next one: `
-        (PowerShell), ^ (cmd), \ (Python, shells). A command split over several lines is then read whole.
-    */
+     * The lines to search, a line that ends with a continuation character joined to the next one: `
+     * (PowerShell), ^ (cmd), \ (Python, shells). A command split over several lines is then read whole.
+     */
     static std::vector<Line> LogicalLines(const std::string& text) {
         std::vector<Line> lines;
         bool joining = false;
