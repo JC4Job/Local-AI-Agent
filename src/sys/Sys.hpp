@@ -66,6 +66,14 @@ inline std::string Sys_MachineName() {
 }
 
 /*
+ * Puts the file `from` in the place of `to`, replacing it in one step, so a reader finds the old file or the new
+ * one, never half of one. False if Windows refuses (no permission, `to` open without sharing).
+ */
+inline bool Sys_ReplaceFile(const std::filesystem::path& from, const std::filesystem::path& to) {
+    return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
+
+/*
  * True when the console window was opened for this process alone, as when it is started from Explorer: the
  * window closes as soon as the process ends, before anyone can read it.
  */

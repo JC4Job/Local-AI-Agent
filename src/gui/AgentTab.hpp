@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -15,6 +16,8 @@
 #include "misc/cpp/imgui_stdlib.h"
 #include "agent/AutonomousAgent.hpp"
 #include "agent/ChatAgent.hpp"
+#include "bio/EndocrineSystem.hpp"
+#include "gui/LifePanel.hpp"
 #include "gui/UiCommon.hpp"
 
 /*
@@ -36,6 +39,15 @@
  *
  * WARNING: code that CLISecurityChecking flags waits for the user: the worker blocks in Session::Confirm until
  * ChatWindow's popup calls Answer(). Stop and closing the window answer no, or the worker would wait forever.
+ *
+ * Each agent has a body (bio/EndocrineSystem.hpp), shared by its chat and its tasks: both feel what happens as
+ * they work and send each message in the mood the body is in. It lives as the window runs (Live, every frame),
+ * its feeling is shown above the conversation and its life under a header there (gui/LifePanel.hpp), and it is
+ * saved in data\life\<agent name>.txt every half minute, after each turn and when the tab closes, so the next
+ * start goes on with the same life.
+ *
+ * WARNING: the body is the one thing both threads touch directly: it is under the session's mutex. The worker
+ * feels and reads the mood there; the UI thread makes it live and draws a copy taken each frame (body_view_).
  */
 class AgentTab {
 public:
@@ -66,20 +78,32 @@ public:
             [session](const std::string& language, const std::string& code, const CLISecurityChecking::Report& report) {
                 return session->Confirm(language, code, report);
             };
+        const ChatAgent::FeelingHandler on_feeling = [session](Feeling feeling) { session->Feel(feeling); };
+        const ChatAgent::MoodSource     mood       = [session] { return session->CurrentMood(); };
 
         name_           = config.agent_name;
         task_max_steps_ = config.autonomous_max_steps;
+        // No worker yet, so no lock: the life it lived before, rested for the time the program was closed.
+        life_file_  = config.LifeFile();
+        life_found_ = session_->body.Load(life_file_);
+        body_view_  = session_->body;
         // The task agent's copy has no notes: the chat agent shows them already.
         ChatAgent::Config task_config = config;
         task_config.notes.clear();
+        config.notes.push_back((life_found_ ? "Life of " + name_ + " from " : "A new life for " + name_ + ", kept in ") +
+                               life_file_.u8string());
 
         session_->agent = std::make_unique<ChatAgent>(on_activity, std::move(config));
         session_->agent->SetStreamHandler(on_stream);
         session_->agent->SetConfirmHandler(on_confirm);
+        session_->agent->SetFeelingHandler(on_feeling);
+        session_->agent->SetMoodSource(mood);
 
         session_->task = std::make_unique<AutonomousAgent>(on_activity, std::move(task_config));
         session_->task->SetStreamHandler(on_stream);
         session_->task->SetConfirmHandler(on_confirm);
+        session_->task->SetFeelingHandler(on_feeling);
+        session_->task->SetMoodSource(mood);
         session_->task->SetStepHandler([session, name = name_](int step, const std::string& note) {
             Event e{Event::StepNote, note};
             e.title = name + " (step " + std::to_string(step) + ")";
@@ -88,6 +112,7 @@ public:
     }
 
     ~AgentTab() {
+        SaveLife();  // as it is now: a worker still busy is let go below, and what it feels after is lost
         session_->Answer(false);  // WARNING: a worker waiting for a confirmation would otherwise wait forever
         if (!worker_.joinable()) {
             return;
@@ -114,6 +139,8 @@ public:
     bool                   Busy()     const { return busy_; }
     // Made in the window, with a file of its own; the default agent has none.
     bool                   Made()     const { return !Settings().agent_file.empty(); }
+    // Where the agent's life is saved; see ChatAgentConfig::LifeFile.
+    const std::filesystem::path& LifeFile() const { return life_file_; }
 
     // What the agent is doing, for the window's header.
     std::string Status() const {
@@ -160,12 +187,15 @@ public:
     }
 
     /*
-     * Applies what the worker posted.
+     * Applies what the worker posted, and the agent lives on by the time since the last frame (Live).
      *
      * WARNING: call it every frame, for every tab, shown or not, or a tab in the background never shows that
-     * its agent is done.
+     * its agent is done, and its agent does not live.
      */
-    void Poll() { DrainInbox(); }
+    void Poll() {
+        DrainInbox();
+        Live();
+    }
 
     // The id of the question the worker waits on, 0 when it waits on none.
     int WaitingQuestion() const {
@@ -188,6 +218,7 @@ public:
         const float       input_h = line * 3.0f + style.FramePadding.y * 2.0f;
 
         const Action action = DrawAbout();
+        ui::DrawLife(body_view_, name_);
         DrawHistory(-(input_h + line + style.ItemSpacing.y * 2.0f));
         DrawInput(input_h);
         return action;
@@ -260,6 +291,26 @@ private:
             }
             confirm_cv.notify_all();
         }
+
+        /*
+         * The agent's body: the worker feels what happens as it works and reads the mood of each message; the
+         * UI thread makes it live and copies it to draw.
+         *
+         * WARNING: guarded by `mu`.
+         */
+        EndocrineSystem body;
+
+        // Worker thread: something happened to the agent.
+        void Feel(Feeling feeling) {
+            std::lock_guard<std::mutex> lock(mu);
+            body.Feel(feeling);
+        }
+
+        // Worker thread: the mood the next message goes to the model in.
+        Mood CurrentMood() {
+            std::lock_guard<std::mutex> lock(mu);
+            return body.CurrentMood();
+        }
     };
 
     enum class Role { User, Agent, Step, Activity, Error };
@@ -286,8 +337,59 @@ private:
     Clock::time_point        busy_since_;
     bool                     scroll_to_bottom_ = false;
     bool                     focus_input_      = true;
+    std::filesystem::path    life_file_;                    // see ChatAgentConfig::LifeFile
+    bool                     life_found_       = false;     // it was there when the tab opened
+    EndocrineSystem          body_view_;                    // the body as of this frame, to draw; see Live
+    Clock::time_point        lived_until_      = Clock::now();
+    Clock::time_point        life_saved_at_    = Clock::now();
+    bool                     save_life_        = true;      // save at the next frame: a turn ended, or a newborn
+    bool                     life_save_failed_ = false;     // reported once, not every half minute
+
+    /*
+     * The longest time one frame lives. The window draws nothing while it is minimized, so the frame after
+     * lives all of that time; past this, it is a clock jump, not time the agent lived.
+     */
+    static constexpr double               kMaxLiveSeconds = 12.0 * 3600.0;
+    static constexpr std::chrono::seconds kSaveLifeEvery{30};
 
     ChatAgent& Agent() { return *session_->agent; }
+
+    /*
+     * The time since the last frame goes by for the agent's body (EndocrineSystem::Live), and body_view_ takes
+     * a copy to draw. The life is saved every kSaveLifeEvery, and at the frame after a turn ends.
+     */
+    void Live() {
+        const Clock::time_point now     = Clock::now();
+        const double            seconds = std::min(std::chrono::duration<double>(now - lived_until_).count(),
+                                                   kMaxLiveSeconds);
+        lived_until_ = now;
+        {
+            std::lock_guard<std::mutex> lock(session_->mu);
+            session_->body.Live(seconds, busy_);
+            body_view_ = session_->body;
+        }
+        if (save_life_ || now - life_saved_at_ >= kSaveLifeEvery) {
+            SaveLife();
+        }
+    }
+
+    // Writes the agent's life to its file, as the body is now. A failure is shown once in the activity log.
+    void SaveLife() {
+        EndocrineSystem body;
+        {
+            std::lock_guard<std::mutex> lock(session_->mu);
+            body = session_->body;
+        }
+        save_life_     = false;
+        life_saved_at_ = Clock::now();
+        if (body.Save(life_file_, name_)) {
+            life_save_failed_ = false;
+        } else if (!life_save_failed_) {
+            life_save_failed_ = true;
+            Note("[Could not save the life of " + name_ + " in " + life_file_.u8string() + ": it goes on in "
+                 "memory, and the program tries again every half minute]");
+        }
+    }
 
     int BusySeconds() const {
         return static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - busy_since_).count());
@@ -327,6 +429,7 @@ private:
                 busy_ = false;
                 stopping_ = false;
                 task_ = false;
+                save_life_ = true;  // what the turn made it feel
                 draft_.clear();
                 if (e.kind == Event::TaskEnd) {
                     messages_.push_back({Role::Agent, ui::IsBlank(e.text) ? "(The task ended without a result.)"
@@ -419,7 +522,7 @@ private:
 
     /*
      * The line above the conversation: the agent's model and where it comes from, with its instructions on
-     * hover. An agent made in the window also has Delete agent there.
+     * hover, and its feeling. An agent made in the window also has Delete agent there.
      */
     Action DrawAbout() {
         const ChatAgentConfig& config = Settings();
@@ -435,6 +538,7 @@ private:
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
+        ui::DrawFeeling(body_view_);
         if (!Made()) {
             return Action::None;
         }

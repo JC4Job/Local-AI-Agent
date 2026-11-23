@@ -14,8 +14,8 @@
  * Where ChatAgent answers one message and waits for the next, Run() keeps the model working on the goal, step
  * after step, until it calls the finish tool, stops making progress or runs out of steps.
  *
- * One step is one ChatAgent::Ask(): the model acts with its tools (up to max_tool_rounds rounds), then writes a
- * note on what it did. Run() answers the note with the next step's message, so the program, not a person, keeps
+ * One step is one message to the ChatAgent (StartTask, then ContinueTask): the model acts with its tools (up to
+ * max_tool_rounds rounds), then writes a note on what it did. Run() answers the note with the next step's message, so the program, not a person, keeps
  * the conversation going. The conversation grows as in a chat, and the harness shortens the results of earlier
  * steps when it nears the context limit.
  *
@@ -59,6 +59,10 @@
  * (ChatAgent::FindFileTask), so the model does not search the knowledge base and the internet before writing.
  * One that asks to delete keeps write_file from emptying a file in place of deleting it (a small model does
  * that, then reports the file deleted); delete_file deletes it, after the user allows it.
+ *
+ * NOTE: with a body (SetFeelingHandler), a run is felt as a whole: the goal given, each step with nothing new,
+ * and how it ended. Each step's tools are felt by the ChatAgent, and each step goes to the model in the mood
+ * the agent is in by then (ChatAgent::SetMoodSource), so a run that keeps failing goes on more carefully.
  */
 class AutonomousAgent {
 public:
@@ -134,6 +138,17 @@ public:
     void SetConfirmHandler(ChatAgent::ConfirmHandler handler) { agent_.SetConfirmHandler(std::move(handler)); }
 
     /*
+     * What happens to the agent in a run: its tools' feelings (ChatAgent::SetFeelingHandler), and the run's
+     * own: the goal given, a step with nothing new (Stuck), and how it ended.
+     *
+     * WARNING: called on the thread that runs Run(). Do not call this while Run() is running.
+     */
+    void SetFeelingHandler(ChatAgent::FeelingHandler handler) { agent_.SetFeelingHandler(std::move(handler)); }
+
+    // The mood each step goes to the model in; see ChatAgent::SetMoodSource. Same warning.
+    void SetMoodSource(ChatAgent::MoodSource source) { agent_.SetMoodSource(std::move(source)); }
+
+    /*
      * See ChatAgent::ApplySettings; the autonomous instructions are added again.
      *
      * WARNING: do not call this while Run() is running.
@@ -150,12 +165,54 @@ public:
     }
 
     /*
-     * Works on `goal` until finish is called or a stopping rule ends the run, in a new conversation.
+     * Works on `goal` until finish is called or a stopping rule ends the run, in a new conversation. The goal is
+     * felt as it is given, and the run as it ends (Felt).
      *
      * WARNING: blocks for the whole run, which on a slow machine takes minutes to hours: call it off the UI
      * thread.
      */
     Result Run(const std::string& goal) {
+        agent_.Feel(Feeling::GoalGiven);
+        const Result result = Work(goal);
+        agent_.Feel(Felt(result.outcome));
+        return result;
+    }
+
+private:
+    // Up to this size the goal is repeated in every step's message; a longer one would fill the context.
+    static constexpr size_t kRestateGoalBytes = 600;
+    // What the model says is missing, as the next step's message repeats it.
+    static constexpr size_t kMissingBytes     = 400;
+
+    // Why a step did nothing new, which the next step's message points out.
+    enum class Idle {
+        None,         // it did something new
+        NoTool,       // no tool call
+        OnlyRepeats,  // every tool call was one already made in this run
+    };
+
+    ActivityHandler     on_activity_;
+    StepHandler         on_step_;
+    ChatAgent           agent_;
+    std::atomic<bool>   stop_{false};
+    bool                finished_       = false;  // finish was called in this run
+    bool                finish_refused_ = false;  // finish was called without a summary in the current step
+    std::string         summary_;                 // its summary
+
+    // How the end of a run feels.
+    static Feeling Felt(Outcome outcome) {
+        switch (outcome) {
+        case Outcome::Finished:   return Feeling::GoalDone;
+        case Outcome::Stalled:    return Feeling::GoalMissed;
+        case Outcome::OutOfSteps: return Feeling::GoalMissed;
+        case Outcome::Stopped:    return Feeling::Stopped;
+        case Outcome::Failed:     return Feeling::NoReply;
+        }
+        return Feeling::GoalMissed;
+    }
+
+    // Run() without the feelings of the run as a whole.
+    Result Work(const std::string& goal) {
         agent_.NewConversation();
         stop_     = false;
         finished_ = false;
@@ -178,7 +235,7 @@ public:
 
             const std::string done_before = agent_.TaskLog();
             finish_refused_ = false;
-            result.summary  = step == 1 ? agent_.Ask(message) : agent_.ContinueTask(message);
+            result.summary  = step == 1 ? agent_.StartTask(message) : agent_.ContinueTask(message);
             if (Over(result, result.summary)) {
                 return result;
             }
@@ -189,6 +246,9 @@ public:
                 idle = Idle::NoTool;
             } else if (agent_.LastAskRepeats() >= tool_calls) {
                 idle = Idle::OnlyRepeats;
+            }
+            if (idle != Idle::None) {
+                agent_.Feel(Feeling::Stuck);
             }
             idle_steps = idle == Idle::None ? 0 : idle_steps + 1;
             if (idle_steps >= 2) {
@@ -222,27 +282,6 @@ public:
         result.outcome = Outcome::OutOfSteps;
         return result;
     }
-
-private:
-    // Up to this size the goal is repeated in every step's message; a longer one would fill the context.
-    static constexpr size_t kRestateGoalBytes = 600;
-    // What the model says is missing, as the next step's message repeats it.
-    static constexpr size_t kMissingBytes     = 400;
-
-    // Why a step did nothing new, which the next step's message points out.
-    enum class Idle {
-        None,         // it did something new
-        NoTool,       // no tool call
-        OnlyRepeats,  // every tool call was one already made in this run
-    };
-
-    ActivityHandler     on_activity_;
-    StepHandler         on_step_;
-    ChatAgent           agent_;
-    std::atomic<bool>   stop_{false};
-    bool                finished_       = false;  // finish was called in this run
-    bool                finish_refused_ = false;  // finish was called without a summary in the current step
-    std::string         summary_;                 // its summary
 
     static ChatAgentConfig WithAutonomousPrompt(ChatAgentConfig config) {
         config.system_prompt += "\n" + config.autonomous_prompt;

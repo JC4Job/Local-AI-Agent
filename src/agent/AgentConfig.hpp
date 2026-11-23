@@ -148,6 +148,7 @@ struct ChatAgentConfig {
      * rag index: the passage index the knowledge base search keeps of them.
      * workspace: where write_file puts a file named without a full path, and the folder execute_code runs in,
      *            so the files a script makes with a relative path land there too, not next to the program.
+     * life:      each agent's life (bio/EndocrineSystem.hpp), one file per agent; see LifeFile.
      *
      * NOTE: writing a file anywhere outside the workspace asks the user first.
      */
@@ -155,6 +156,7 @@ struct ChatAgentConfig {
     static constexpr const char* kKnowledgeDir = "data\\knowledge";
     static constexpr const char* kRagIndex     = "data\\rag\\knowledge.idx";
     static constexpr const char* kWorkspaceDir = "workspace";
+    static constexpr const char* kLifeDir      = "data\\life";
 
     /*
      * File tasks: a message with a word from each of these two lists asks to create, save or run a file
@@ -452,6 +454,20 @@ struct ChatAgentConfig {
     }
 
     /*
+     * Where this agent's life is kept (bio/EndocrineSystem.hpp): its hormone levels, the time it spent in each
+     * life state and what happened to it. data\life\<agent name>.txt, so each agent lives a life of its own.
+     *
+     * NOTE: by name, as the agents are told apart in the window: a renamed agent starts a new life.
+     */
+    std::filesystem::path LifeFile() const {
+        std::string stem = SafeFileName(agent_name);
+        if (stem.empty()) {
+            stem = "agent";
+        }
+        return fileSystem.RelativePathToOSPath(kLifeDir) / std::filesystem::u8path(stem + ".txt");
+    }
+
+    /*
      * Writes `text` with Windows line ends, creating the folders on the way. False if it cannot. For the files
      * Load() reads: the Settings window writes this computer's, restore_config.exe the defaults.
      */
@@ -634,13 +650,19 @@ struct ChatAgentConfig {
      * Removes an agent's file, after copying it to config\backup\<date and time>\agents\. Returns what went
      * wrong, empty when it is gone.
      */
-    static std::string DeleteAgentFile(const std::filesystem::path& path) {
+    static std::string DeleteAgentFile(const std::filesystem::path& path) { return MoveToBackup(path, "agents"); }
+
+    /*
+     * Removes a file after copying it to config\backup\<date and time>\<folder>\. Returns what went wrong, empty
+     * when it is gone, or was never there.
+     */
+    static std::string MoveToBackup(const std::filesystem::path& path, const char* folder) {
         namespace fs = std::filesystem;
         std::error_code ec;
         if (!fs::exists(path, ec)) {
             return {};  // removed by hand already
         }
-        const fs::path copy = BackupFolder() / "agents" / path.filename();
+        const fs::path copy = BackupFolder() / folder / path.filename();
         fs::create_directories(copy.parent_path(), ec);
         if (ec || !fs::copy_file(path, copy, fs::copy_options::overwrite_existing, ec)) {
             return "could not copy it to " + copy.u8string() + (ec ? ": " + ec.message() : std::string());

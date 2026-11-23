@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "agent/AgentConfig.hpp"
 #include "agent/AgentHarness.hpp"
 #include "agent/ToolResultCache.hpp"
+#include "bio/EndocrineSystem.hpp"
 #include "execution/CLISecurityChecking.hpp"
 #include "execution/CodeExecutor.hpp"
 #include "rag/RagIndex.hpp"
@@ -35,6 +37,11 @@
  *
  * A front end (the console in cli_main.cpp, the window in ChatWindow.hpp) calls Ask() and, optionally,
  * receives tool activity through an ActivityHandler. Without one, activity is printed to the console.
+ *
+ * A front end that gives the agent a body (AgentTab, bio/EndocrineSystem.hpp) gets what happens to it as it
+ * works, a tool that worked or failed, code the user did not allow, a message answered (SetFeelingHandler),
+ * and gives back the mood the body is in, which shapes each message sent to the model (SetMoodSource): a note
+ * in front of it and a sampling temperature. Without them the agent works as it always has.
  */
 class ChatAgent {
 public:
@@ -48,6 +55,10 @@ public:
     using StreamHandler = AgentHarness::StreamHandler;
     // Asks the user before flagged code runs; see SetConfirmHandler.
     using ConfirmHandler = CLISecurityChecking::ConfirmHandler;
+    // Receives what happens to the agent as it works; see SetFeelingHandler.
+    using FeelingHandler = std::function<void(Feeling)>;
+    // Gives the mood the agent is in; see SetMoodSource.
+    using MoodSource     = std::function<Mood()>;
     using Config = ChatAgentConfig;
 
     // `config`: usually ChatAgentConfig::Load(), the settings in config\settings.txt and config\system_prompt.txt.
@@ -91,6 +102,30 @@ public:
      * while Ask() is running.
      */
     void SetConfirmHandler(ConfirmHandler handler) { confirm_ = std::move(handler); }
+
+    /*
+     * Receives what happens to the agent as it works (bio/EndocrineSystem.hpp): each tool call that worked or
+     * failed, code or a file the user did not allow, a tool call made again, and for a chat message (Ask) the
+     * message itself and how it ended. AutonomousAgent adds those of a task.
+     *
+     * WARNING: called on the thread that runs Ask(). Do not call this while Ask() is running.
+     */
+    void SetFeelingHandler(FeelingHandler handler) { on_feeling_ = std::move(handler); }
+
+    /*
+     * Asked for the agent's mood before each message goes to the model: its note goes in front of the message,
+     * and the model samples at its temperature (see ApplyMood). Without a source, messages go as they are.
+     *
+     * WARNING: called on the thread that runs Ask(). Do not call this while Ask() is running.
+     */
+    void SetMoodSource(MoodSource source) { mood_source_ = std::move(source); }
+
+    // Passes `feeling` to the feeling handler, if there is one. AutonomousAgent reports a task's with it.
+    void Feel(Feeling feeling) const {
+        if (on_feeling_) {
+            on_feeling_(feeling);
+        }
+    }
 
     /*
      * Stops the Ask() in progress, which then returns what the model had written so far (see
@@ -178,13 +213,31 @@ public:
     }
 
     /*
-     * Sends one user message and returns the model's final reply, after any tool calls.
+     * Sends one user message and returns the model's final reply, after any tool calls. The message is felt
+     * (Feeling::Asked), and so is how it ended: answered, stopped by the user, or no reply from the model.
      *
      * WARNING: blocks for as long as the model takes (minutes on a slow machine): call it off the UI thread.
      *
      * WARNING: not safe to call from two threads at once.
      */
     std::string Ask(const std::string& prompt) {
+        Feel(Feeling::Asked);
+        std::string reply = StartTask(prompt);
+        const AgentHarness::PromptStats& last = harness_.LastPrompt();
+        if (last.out_of_rounds) {
+            Feel(Feeling::Stuck);
+        }
+        Feel(last.failed ? Feeling::NoReply : last.stopped ? Feeling::Stopped : Feeling::Answered);
+        return reply;
+    }
+
+    /*
+     * Ask() without the feelings of a chat message, for the first message of a task (AutonomousAgent's first
+     * step): AutonomousAgent feels the task as a whole. The feelings of the tools still come.
+     *
+     * WARNING: as Ask().
+     */
+    std::string StartTask(const std::string& prompt) {
         kb_searched_        = false;
         internet_searched_  = false;
         internet_requested_ = false;
@@ -206,7 +259,7 @@ public:
     }
 
     /*
-     * Like Ask(), for a message that goes on with the same task: AutonomousAgent's next step.
+     * Like StartTask(), for a message that goes on with the same task: AutonomousAgent's next step.
      *
      * The search order carries over from the task's earlier messages instead of starting again: once the
      * knowledge base has been searched, search_internet runs at once, and a request for the internet stays in
@@ -217,6 +270,9 @@ public:
      * `only_tools`: offer only these tools for this message, with at most 2 rounds of tool calls: a short
      * question, not a step of work (AutonomousAgent asks with finish alone whether the goal is done). Empty:
      * the usual tools and rounds.
+     *
+     * NOTE: such a short question goes without the mood (ApplyMood): it asks for a fact, and a note about tone
+     * in front of it would only distract a small model from answering it.
      */
     std::string ContinueTask(const std::string& prompt, std::unordered_set<std::string> only_tools = {}) {
         searched_this_prompt_.clear();
@@ -230,7 +286,13 @@ public:
         if (limited) {
             harness_.SetMaxToolRounds(std::min(2, config_.max_tool_rounds));
         }
-        std::string reply = harness_.ProcessPrompt(prompt);
+        std::string message = prompt;
+        json        options = ChatOptions(config_);
+        if (!limited) {
+            ApplyMood(message, options);
+        }
+        harness_.SetModelOptions(std::move(options));
+        std::string reply = harness_.ProcessPrompt(message);
         harness_.SetOnlyTools({});
         harness_.SetMaxToolRounds(config_.max_tool_rounds);
         return reply;
@@ -312,6 +374,8 @@ private:
     Config                config_;
     ActivityHandler       on_activity_;
     ConfirmHandler        confirm_;
+    FeelingHandler        on_feeling_;   // see SetFeelingHandler
+    MoodSource            mood_source_;  // see SetMoodSource
     CodeExecutor::Limits  exec_limits_;
     AgentHarness          harness_;
     // Talks to the embedding model; kept apart from the harness's client, which sends the chat options.
@@ -354,11 +418,63 @@ private:
      */
     std::string                     last_script_;
 
-    // Counts `key` (tool and arguments) as a repeat when the conversation already made that call.
+    // Counts `key` (tool and arguments) as a repeat, and feels it, when the conversation already made that call.
     void NoteAction(const std::string& key) {
         if (!actions_this_conversation_.insert(key).second) {
             ++repeated_actions_;
+            Feel(Feeling::Repeated);
         }
+    }
+
+    // A tool call that went wrong: felt as a failure. Returns `text`, the result the model reads.
+    std::string Fail(std::string text) const {
+        Feel(Feeling::Failed);
+        return text;
+    }
+
+    // A line of TaskLog() for what a tool did, felt as `feeling`.
+    void Done(std::string line, Feeling feeling) {
+        task_log_.push_back(std::move(line));
+        Feel(feeling);
+    }
+
+    /*
+     * Puts the agent's mood (SetMoodSource) into the message about to go to the model: its note in front of the
+     * message, its temperature into the options. The user's words follow the note unchanged. Homeostasis has
+     * neither, so a balanced agent's messages go as they are.
+     *
+     * NOTE: in the message, not in the system prompt. The system prompt starts the conversation, and Ollama
+     * reuses what it has already read of a conversation only up to the first change: a mood there would have
+     * the whole conversation read again whenever it changed, minutes on a slow machine.
+     *
+     * NOTE: called after AsksForInternet and FindFileTask have read the message, so the note's words count for
+     * neither.
+     *
+     * NOTE: the temperature is a sampling option: Ollama does not reload the model when it changes, as it does
+     * for num_ctx.
+     */
+    void ApplyMood(std::string& message, json& options) const {
+        if (!mood_source_) {
+            return;
+        }
+        const Mood        mood = mood_source_();
+        const std::string note = mood.note;
+        if (note.empty() && mood.temperature <= 0.0) {
+            return;
+        }
+        std::string shown = std::string("[Feeling: ") + Info(mood.state).name;
+        if (!note.empty()) {
+            message = "[How you feel: " + note + " Let it show only in your tone and care; do not talk about it "
+                      "unless the user asks.]\n\n" + message;
+            shown += ". Its note goes in front of the message";
+        }
+        if (mood.temperature > 0.0) {
+            options["temperature"] = mood.temperature;
+            char temperature[16];
+            std::snprintf(temperature, sizeof(temperature), "%.1f", mood.temperature);
+            shown += std::string(note.empty() ? ". " : ", at ") + "temperature " + temperature;
+        }
+        Report(shown + "]");
     }
 
     // "print('a')\nprint('b')" -> "print('a') ...", for a TaskLog line.
@@ -491,6 +607,7 @@ private:
                                                             : "searched the knowledge base for: ") + query);
         if (const std::string* kept = search_cache_.Find(key)) {
             Report(std::string("[") + tool.label + " (from memory): " + query + "]");
+            Feel(Feeling::Found);
             return tool.prefix + *kept;
         }
 
@@ -499,6 +616,7 @@ private:
         if (result.ok) {
             search_cache_.Store(key, result.text);
         }
+        Feel(result.ok ? Feeling::Found : Feeling::Failed);
         return tool.prefix + result.text;
     }
 
@@ -643,7 +761,7 @@ private:
             lang = "cmd";
         }
         if (code.empty()) {
-            return "Error: No code provided.";
+            return Fail("Error: No code provided.");
         }
         const std::string command = SavedScriptCommand(lang, code);
         if (!command.empty()) {
@@ -652,7 +770,7 @@ private:
             code = command;
         } else if (IsBareInterpreter(code)) {
             // It would read its input, and there is none: nothing runs, and the model learns nothing.
-            task_log_.push_back("ran " + TrimSpace(code) + " alone: nothing to run");
+            Done("ran " + TrimSpace(code) + " alone: nothing to run", Feeling::Failed);
             return "Not run: \"" + TrimSpace(code) + "\" alone has nothing to run, since it gets no input here. "
                    "Give the script to run, such as: python name.py";
         }
@@ -670,7 +788,7 @@ private:
             Report("[Potentially harmful code (" + lang + "): " + risk.Harms() + ". Asking the user]");
             if (!confirm_ || !confirm_(lang, code, risk)) {
                 Report("[Not run: the user did not allow it]");
-                task_log_.push_back("not allowed to run: " + FirstLine(code));
+                Done("not allowed to run: " + FirstLine(code), Feeling::Refused);
                 return "Not run: the user did not allow this code. It was flagged because it " + risk.Harms() +
                        ". Do not try to do the same thing in another way. Tell the user what you wanted to do and "
                        "why, and go on without it.";
@@ -685,13 +803,14 @@ private:
         std::filesystem::create_directories(std::filesystem::u8path(config_.workspace_dir), ec);
         auto res = CodeExecutor::ExecuteCode(lang, code, exec_limits_, config_.workspace_dir);
         if (!res.Started()) {
-            task_log_.push_back("could not run: " + FirstLine(code));
+            Done("could not run: " + FirstLine(code), Feeling::Failed);
             return "Error: " + res.error;
         }
-        task_log_.push_back("ran: " + FirstLine(code) + " -> " +
-                            (res.timed_out ? std::string("timed out")
-                                           : "exit code " + std::to_string(res.exit_code) +
-                                                 (res.stdout_str.empty() && res.stderr_str.empty() ? ", no output" : "")));
+        Done("ran: " + FirstLine(code) + " -> " +
+                 (res.timed_out ? std::string("timed out")
+                                : "exit code " + std::to_string(res.exit_code) +
+                                      (res.stdout_str.empty() && res.stderr_str.empty() ? ", no output" : "")),
+             !res.timed_out && res.exit_code == 0 ? Feeling::Did : Feeling::Failed);
 
         std::ostringstream out;
         if (res.timed_out) {
@@ -729,23 +848,23 @@ private:
         const std::string given   = StringArg(args, "path");
         const auto        content = args.find("content");
         if (given.empty()) {
-            return "Error: no path given. Call write_file again with the file's path and name in path.";
+            return Fail("Error: no path given. Call write_file again with the file's path and name in path.");
         }
         if (content == args.end() || !content->is_string()) {
-            return "Error: no content given. Call write_file again with the whole text of the file in content.";
+            return Fail("Error: no content given. Call write_file again with the whole text of the file in content.");
         }
 
         std::string    bad_path;
         const fs::path path = ToolPath(given, "write_file", bad_path);
         if (path.empty()) {
-            return bad_path;
+            return Fail(bad_path);
         }
         const fs::path    workspace = fs::u8path(config_.workspace_dir);
         const std::string shown     = path.u8string();
         std::error_code ec;
         if (!path.has_filename() || fs::is_directory(path, ec)) {
-            return "Error: " + shown + " is a folder. Call write_file again with the path of a file in it, its "
-                   "name included.";
+            return Fail("Error: " + shown + " is a folder. Call write_file again with the path of a file in it, "
+                        "its name included.");
         }
         const bool replaces = fs::exists(path, ec);
         NoteAction("write_file|" + Lower(shown) + "|" + content->get<std::string>());
@@ -758,8 +877,9 @@ private:
          */
         if (replaces && delete_task_ && TrimSpace(content->get<std::string>()).empty()) {
             Report("[write_file with no content on " + shown + ", in a message that asks to delete: not written]");
-            return "Not written: write_file does not delete files. With no content it would only empty " + shown +
-                   ", and the file would still be there. To delete it, call delete_file with path: " + given;
+            return Fail("Not written: write_file does not delete files. With no content it would only empty " +
+                        shown + ", and the file would still be there. To delete it, call delete_file with path: " +
+                        given);
         }
 
         CLISecurityChecking::Report report;
@@ -781,7 +901,7 @@ private:
             Report("[write_file " + shown + ": " + report.Harms() + ". Asking the user]");
             if (!confirm_ || !confirm_("text", content->get<std::string>(), report)) {
                 Report("[Not written: the user did not allow it]");
-                task_log_.push_back("not allowed to write " + shown);
+                Done("not allowed to write " + shown, Feeling::Refused);
                 return "Not written: the user did not allow writing " + shown + ". It was flagged because it " +
                        report.Harms() + ". Do not try to write it in another way. Tell the user what you wanted to "
                        "write and where, and go on without it.";
@@ -811,13 +931,13 @@ private:
 
         fs::create_directories(path.parent_path(), ec);
         if (ec) {
-            return "Error: could not create the folder " + path.parent_path().u8string() + ": " + ec.message();
+            return Fail("Error: could not create the folder " + path.parent_path().u8string() + ": " + ec.message());
         }
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
         out.close();
         if (!out) {
-            return "Error: could not write " + shown + " (in use by another program, or no permission).";
+            return Fail("Error: could not write " + shown + " (in use by another program, or no permission).");
         }
 
         Report("[" + std::string(replaces ? "Replaced " : "Created ") + shown + "]");
@@ -826,12 +946,12 @@ private:
         const std::string error = PythonSyntaxError(path);
         if (!error.empty()) {
             Report("[The file is not valid Python: " + error + "]");
-            task_log_.push_back("wrote " + shown + ", but it is not valid Python (" + error + ")");
+            Done("wrote " + shown + ", but it is not valid Python (" + error + ")", Feeling::Failed);
             return result + " But Python cannot read it: " + error + ". The content was probably cut at a double "
                    "quote. Call write_file again with the whole content, writing text between single quotes "
                    "('Hello').";
         }
-        task_log_.push_back("wrote " + shown);
+        Done("wrote " + shown, Feeling::Did);
         // A file in the workspace runs by its name: execute_code runs there.
         const fs::path    name = IsInside(path, workspace) ? path.lexically_relative(workspace) : path;
         const std::string run  = RunCommand(name);
@@ -877,12 +997,12 @@ private:
         namespace fs = std::filesystem;
         const std::string given = StringArg(args, "path");
         if (given.empty()) {
-            return "Error: no path given. Call delete_file again with the file's path and name in path.";
+            return Fail("Error: no path given. Call delete_file again with the file's path and name in path.");
         }
         std::string    error;
         const fs::path path = ToolPath(given, "delete_file", error);
         if (path.empty()) {
-            return error;
+            return Fail(error);
         }
         const fs::path    workspace = fs::u8path(config_.workspace_dir);
         const std::string shown     = path.u8string();
@@ -890,14 +1010,15 @@ private:
 
         std::error_code       ec;
         const fs::file_status status = fs::symlink_status(path, ec);
+        // NOTE: not felt as a failure: it is most often a file the agent deleted already.
         if (!fs::exists(status)) {
             return "Nothing deleted: " + shown + " does not exist. Check the name the user gave; if you deleted it "
                    "earlier, that is done.";
         }
         const bool folder = fs::is_directory(status);
         if (folder && !fs::is_empty(path, ec)) {
-            return "Not deleted: " + shown + " is a folder with files in it, and delete_file deletes one file or an "
-                   "empty folder. Tell the user, and go on without it.";
+            return Fail("Not deleted: " + shown + " is a folder with files in it, and delete_file deletes one file "
+                        "or an empty folder. Tell the user, and go on without it.");
         }
 
         CLISecurityChecking::Report report;
@@ -918,7 +1039,7 @@ private:
         Report("[delete_file " + shown + ": " + report.Harms() + ". Asking the user]");
         if (!confirm_ || !confirm_("text", std::string(), report)) {
             Report("[Not deleted: the user did not allow it]");
-            task_log_.push_back("not allowed to delete " + shown);
+            Done("not allowed to delete " + shown, Feeling::Refused);
             return "Not deleted: the user did not allow deleting " + shown + ". Do not try to delete it in another "
                    "way. Tell the user, and go on without it.";
         }
@@ -927,11 +1048,11 @@ private:
         fs::remove(path, ec);
         std::error_code gone;
         if (ec || fs::exists(fs::symlink_status(path, gone))) {
-            return "Error: could not delete " + shown + " (in use by another program, or no permission)" +
-                   (ec ? ": " + ec.message() : std::string()) + ".";
+            return Fail("Error: could not delete " + shown + " (in use by another program, or no permission)" +
+                        (ec ? ": " + ec.message() : std::string()) + ".");
         }
         Report("[Deleted " + shown + "]");
-        task_log_.push_back("deleted " + shown);
+        Done("deleted " + shown, Feeling::Did);
         return "Deleted " + shown + ".";
     }
 

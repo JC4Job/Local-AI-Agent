@@ -2,6 +2,7 @@
 #   bin/agent_gui.exe  window front end (src/gui/gui_main.cpp)
 #   bin/agent.exe      console front end (src/cli/cli_main.cpp)
 #   bin/restore_config.exe  writes the default config back when it is broken (src/tools/restore_config.cpp)
+#   bin/endocrine_sim.exe   plays the agent's hormones through scenarios, to tune them (src/tools/endocrine_sim.cpp)
 # Usage: .\build.ps1          build both
 #        .\build.ps1 -Clean   recompile Dear ImGui too
 param([switch]$Clean)
@@ -44,6 +45,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "linking bin/restore_config.exe"
 & g++ @common -Wall src/tools/restore_config.cpp -o bin/restore_config.exe -static
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# A tool for tuning the agent's hormones without a model (src/bio/EndocrineSystem.hpp); not packaged.
+Write-Host "linking bin/endocrine_sim.exe"
+& g++ @common -Wall src/tools/endocrine_sim.cpp -o bin/endocrine_sim.exe -static
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "done"

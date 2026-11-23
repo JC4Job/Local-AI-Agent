@@ -761,8 +761,9 @@ private:
         }
 
         ui::Wrapped("Delete the agent " + tab->Name() + "?");
-        ui::Dim("Its file, " + ui::ShortPath(tab->Settings().agent_file) + ", is removed, and a copy goes to "
-                "config\\backup\\. Its conversation is lost. The other agents are not changed.");
+        ui::Dim("Its file, " + ui::ShortPath(tab->Settings().agent_file) + ", and its life, " +
+                ui::ShortPath(tab->LifeFile().u8string()) + ", are removed, and copies go to config\\backup\\. Its "
+                "conversation is lost. The other agents are not changed.");
         if (!delete_error_.empty()) {
             ImGui::Spacing();
             ui::Wrapped(delete_error_, &ui::kErrorColor);
@@ -796,8 +797,17 @@ private:
             delete_error_ = "Not deleted: " + error + ".";
             return false;
         }
+        const std::filesystem::path life = tab->LifeFile();
         tabs_.erase(std::remove_if(tabs_.begin(), tabs_.end(), [id](const auto& t) { return t->Id() == id; }),
                     tabs_.end());
+        /*
+         * After the tab is gone, since it saves the life on its way out; a new agent given the same name then
+         * starts a life of its own.
+         *
+         * NOTE: a failure is not reported: the agent is deleted already, and the life left behind only means a
+         * new agent of the same name would go on with it.
+         */
+        ChatAgentConfig::MoveToBackup(life, "life");
         current_ = 0;
         return true;
     }

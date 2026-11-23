@@ -297,32 +297,35 @@ private:
         return rules;
     }
 
-    // Compiled once, on first use; std::regex is safe to search from several threads.
-    static const std::vector<CompiledRule>& CompiledRules() {
-        static const std::vector<CompiledRule> compiled = [] {
-            const auto flags = std::regex::ECMAScript | std::regex::icase | std::regex::optimize;
-            std::vector<CompiledRule> out;
-            for (const Rule& rule : RuleTable()) {
-                CompiledRule c{&rule, std::regex(rule.pattern, flags), std::regex()};
-                if (rule.also) {
-                    c.also = std::regex(rule.also, flags);
-                }
-                out.push_back(std::move(c));
+    static std::vector<CompiledRule> BuildCompiledRules () {
+        std::vector<CompiledRule> out;
+        const auto flags = std::regex::ECMAScript | std::regex::icase | std::regex::optimize;
+        for (const Rule& rule : RuleTable()) {
+            CompiledRule c{&rule, std::regex(rule.pattern, flags), std::regex()};
+            if (rule.also) {
+                c.also = std::regex(rule.also, flags);
             }
-            return out;
-        }();
+            out.push_back(std::move(c));
+        }
+        return out;
+    }
+    
+    static const std::vector<CompiledRule>& CompiledRules() {
+        static const std::vector<CompiledRule> compiled = BuildCompiledRules();
         return compiled;
     }
 
-    static bool Matches(const CompiledRule& rule, const std::string& line) {
-        for (size_t start = 0;; start += kChunkStep) {
+    static bool Matches(const CompiledRule& rule, std::string_view line) {
+        for (size_t start = 0; ; start += kChunkStep) {
+            const size_t len  = std::min(kChunkBytes, line.size() - start);
             const char* begin = line.data() + start;
-            const char* end   = begin + std::min(kChunkBytes, line.size() - start);
+            const char* end   = begin + len;
+
             if (std::regex_search(begin, end, rule.pattern) &&
                 (!rule.def->also || std::regex_search(begin, end, rule.also))) {
                 return true;
             }
-            if (start + kChunkBytes >= line.size()) {
+            if (start + len >= line.size()) {
                 return false;
             }
         }

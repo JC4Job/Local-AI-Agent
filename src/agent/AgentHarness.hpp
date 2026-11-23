@@ -82,8 +82,10 @@ public:
 
     // What the last ProcessPrompt did, for a caller that drives the model in a loop (AutonomousAgent).
     struct PromptStats {
-        int  tool_calls = 0;      // tool calls the model made, including any not run
-        bool failed     = false;  // no reply from the model (Ollama down, unknown model): the reply is the error
+        int  tool_calls    = 0;      // tool calls the model made, including any not run
+        bool failed        = false;  // no reply from the model (Ollama down, unknown model): the reply is the error
+        bool stopped       = false;  // the user stopped it (Cancel)
+        bool out_of_rounds = false;  // max_tool_rounds ran out and the model was told to answer without tools
     };
 
     AgentHarness(OllamaClient client, std::string model_name, std::string system_prompt)
@@ -216,6 +218,7 @@ public:
         for (int round = 0;; ++round) {
             const bool allow_tools = round < max_tool_rounds_;
             if (!allow_tools) {
+                last_prompt_.out_of_rounds = true;
                 Notify("[Harness] " + std::to_string(max_tool_rounds_) +
                        " rounds of tool calls without an answer; asking the model to answer now.");
                 messages_.push_back({
@@ -469,6 +472,7 @@ private:
         }
         const std::string reply = partial.empty() ? "(Stopped.)" : partial + "\n\n(Stopped.)";
         messages_.push_back({{"role", "assistant"}, {"content", reply}});
+        last_prompt_.stopped = true;
         Notify("[Stopped by the user]");
         return reply;
     }
