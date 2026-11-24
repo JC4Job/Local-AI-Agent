@@ -1,0 +1,17 @@
+# The lights of Sof_IA's avatar and the background behind it. An animation (anims\) can change any of these for
+# its state; what it does not set comes from here, and a key left out here is the renderer's default.
+#
+# Each light is a color as multiples of white (r g b; above 1 is brighter) and a direction toward it (x y z,
+# +y up, +z toward the camera). The background is a gradient from top to bottom, in sRGB colors (0 to 1).
+#
+# Format: one "key = value" per line. Lines starting with # are comments. Numbers use a decimal point.
+
+key_light         = 1.10 1.02 0.95
+key_light_dir     = -0.45 0.55 0.70
+fill_light        = 0.28 0.30 0.38
+fill_light_dir    = 0.75 0.10 0.50
+rim_light         = 0.40 0.34 0.55
+rim_light_dir     = 0.00 0.45 -1.00
+ambient           = 0.26 0.24 0.30
+background_top    = 0.17 0.13 0.24
+background_bottom = 0.07 0.06 0.11

@@ -1,10 +1,14 @@
 # Local AI Agent
 
+> **Dedicated to Sofia.** The default assistant, **Sof_IA**, is named after the author's daughter.
+
 A native **C++17 AI assistant for Windows**, powered by models served through **Ollama**. Chat through a desktop window or the command line, search a local document collection, retrieve information from the web, and create or execute scripts on your computer.
 
-The default assistant is **Sof_IA**. The desktop interface also supports additional agents with their own names, models, instructions, and conversations.
+The default assistant is **Sof_IA** (Sofia). The desktop interface also supports additional agents with their own names, models, instructions, and conversations.
 
-The application implements its own tool-calling harness, retrieval index, execution layer, and GUI integration. Model inference runs in Ollama; PDF extraction and web search use Python helpers.
+In the desktop interface, each agent also has a simulated **body**: seven hormones react to how its work goes, settle over time, and add up to one of six life states. The state adjusts the tone note and sampling temperature of the agent's next model request, and a **3D avatar** beside the conversation plays an animation for that state.
+
+The application implements its own tool-calling harness, retrieval index, execution layer, endocrine simulation, animation system, 3D renderer, and GUI integration. Model inference runs in Ollama; PDF extraction and web search use Python helpers.
 
 ## Contents
 
@@ -13,6 +17,8 @@ The application implements its own tool-calling harness, retrieval index, execut
 - [Build and first run](#build-and-first-run)
 - [Usage](#usage)
 - [Knowledge base and PDF ingestion](#knowledge-base-and-pdf-ingestion)
+- [Agent body: hormones and life states](#agent-body-hormones-and-life-states)
+- [Avatars, animation, and 3D models](#avatars-animation-and-3d-models)
 - [Configuration](#configuration)
 - [Architecture](#architecture)
 - [Code reference](#code-reference)
@@ -33,8 +39,10 @@ The application implements its own tool-calling harness, retrieval index, execut
 - **Incremental indexing:** reuse unchanged passages and embeddings, with a persistent binary index and resumable embedding generation.
 - **PDF ingestion:** extract text into JSON; optional Portuguese/English OCR.
 - **Internet search:** DuckDuckGo, Bing, and Wikipedia fallbacks, with relevant text extracted from result pages.
-- **File creation and script execution:** write text files and run Python, Windows PowerShell, or CMD with bounded subprocess resources.
+- **File creation and script execution:** write or delete text files and run Python, Windows PowerShell, or CMD with bounded subprocess resources.
 - **Editable configuration:** shared settings, machine-specific overrides, agent-specific overrides, and external prompt files.
+- **Simulated endocrine system:** chat and tool outcomes move seven hormone levels, which interact, settle back to their baselines, and determine one of six life states. The state shapes each request's tone and temperature, and each agent's life persists between sessions.
+- **Animated 3D avatars:** each agent can have a Wavefront `.obj` model with a bone rig, camera, lights, and one text-defined animation per life state. Avatars are drawn with Direct3D 11, blend between states, and reload while the window is open.
 
 ## Requirements
 
@@ -44,12 +52,13 @@ The application implements its own tool-calling harness, retrieval index, execut
 | --- | --- |
 | Windows 10/11, 64-bit | Win32 APIs, WinHTTP, process management, and the desktop application. |
 | [Ollama](https://ollama.com/) | Serves the chat model and optional embedding model, on this computer or another reachable host. |
-| Chat model with tool support | Required for document search, web search, file creation, and execution. The committed settings select `llama3.1:8b`. |
+| Chat model with tool support | Required for document search, web search, file creation, and execution. The committed settings select `llama3.2`. |
 | `bge-m3` | Embedding model selected by the committed configuration. Optional when using keyword-only retrieval. |
 | Python 3, available as `python` on `PATH` | Web search, PDF ingestion, Python execution, and Python syntax checks. Native document retrieval itself runs in C++. |
 | [PyMuPDF](https://pymupdf.readthedocs.io/) | Required by `scripts/reader.py` for PDF extraction. |
 | Tesseract with `por` and `eng` language data | Required only for `reader.py --ocr`. |
-| Direct3D 11 runtime and compatible rendering support | Required for the GUI. The host attempts WARP software rendering if hardware creation reports unsupported. |
+| Direct3D 11 runtime and compatible rendering support | Required for the GUI and its avatars. The host attempts WARP software rendering if hardware creation reports unsupported. If only the avatar renderer fails, chat still works and each avatar square shows the reason. |
+| Avatar model files | Optional. Each agent's `data/avatar/<agent>/model.txt` names a Wavefront `.obj`. The bundled avatar uses `Sofia.obj` (about 3 MB). |
 
 Memory and inference speed depend on the model, quantization, context window, and number of active agents. The repository does not define a fixed RAM or VRAM minimum.
 
@@ -95,10 +104,10 @@ python -m pip install pymupdf
 
 ### 3. Configure the Ollama endpoint
 
-Edit [`config/settings.txt`](config/settings.txt). For Ollama running on the same computer, use:
+Edit [`config/settings.txt`](config/settings.txt). The committed values target Ollama running on the same computer:
 
 ```ini
-model = llama3.1:8b
+model = llama3.2
 endpoint = http://127.0.0.1:11434/api/chat
 embed_model = bge-m3
 embed_num_ctx = 1024
@@ -106,7 +115,7 @@ num_ctx = 16384
 num_predict = 4096
 ```
 
-**The checked-in configuration points to `http://hostname:port/api/chat`.** Replace it unless that is your intended server. The endpoint must include `/api/chat`; the client derives `/api/embed` and `/api/tags` from the same server.
+To use another server, change `endpoint`. It must include `/api/chat`; the client derives `/api/embed` and `/api/tags` from the same server.
 
 If `config/machines/<computer-name>.txt` already exists, its values override `settings.txt`. See [configuration precedence](#configuration-precedence).
 
@@ -115,9 +124,9 @@ If `config/machines/<computer-name>.txt` already exists, its values override `se
 For a local Ollama server:
 
 ```powershell
-ollama pull llama3.1:8b
+ollama pull llama3.2
 ollama pull bge-m3
-ollama show llama3.1:8b
+ollama show llama3.2
 ```
 
 Check the model's reported capabilities for tool support. For a remote endpoint, install the models on that server; pulling models into an unrelated local Ollama instance will not make them available remotely.
@@ -139,6 +148,8 @@ A clean first build avoids reusing the object files currently tracked under `bui
 | `bin/agent_gui.exe` | Desktop chat and agent tabs. |
 | `bin/agent.exe` | Console chat, autonomous tasks, and knowledge indexing. |
 | `bin/restore_config.exe` | Configuration recovery utility. |
+| `bin/endocrine_sim.exe` | Console simulator for tuning the hormones without Ollama or the window. Not packaged. |
+| `bin/avatar_render.exe` | Renders an agent's avatar to a `.bmp`, or lists its model's parts, without the window. Not packaged. |
 
 `build.ps1` compiles Dear ImGui objects into `build/` and reuses them when their `.cpp` timestamps have not changed. Use `-Clean` after changing vendored headers or switching toolchains.
 
@@ -179,8 +190,19 @@ To change the warm-up keep-alive duration:
 | **+** | Create an agent with a name, model, and instructions. |
 | **Delete agent** | Remove a custom agent definition after backing it up. |
 | **Copy** / text selection | Copy a reply or selected text. |
+| Drag the avatar | Turn the model (any yaw; pitch within ±30°). |
+| Double-click the avatar | Face the model forward again. |
+| Right-click the avatar | Preview a state's animation, import an animation, list the model's parts, open the avatar folder, or reread its files. |
 
-Agent definitions reopen at startup. **Conversations are held in memory and are not restored after restarting.** Each tab's chat and autonomous task agent have separate conversation state, even though their messages appear in the same tab.
+Each tab also shows:
+
+- **Feeling**, on the line above the conversation: the agent's current life state, in its color. Hover to see what the state means and what it adds to requests.
+- **Life of …**, a collapsible panel with the current hormone levels, the share of the agent's life spent in each state, and a record of its work.
+- The agent's **avatar**, to the right of the conversation, playing the animation for its life state.
+
+See [Agent body](#agent-body-hormones-and-life-states) and [Avatars](#avatars-animation-and-3d-models) for details.
+
+Agent definitions and their lives reopen at startup. **Conversations are held in memory and are not restored after restarting.** Each tab's chat and autonomous task agent have separate conversation state, even though their messages appear in the same tab.
 
 Multiple tabs can work concurrently, but actual model concurrency and loading behavior depend on Ollama and available resources.
 
@@ -207,6 +229,8 @@ Get-Content .\question.txt -Raw | .\bin\agent.exe
 In interactive mode, a trailing backslash or backtick continues input onto the next line. Enter `exit`, `quit`, `done`, or `sair` to exit; empty input also ends the session.
 
 The CLI recognizes `--index` and `--auto`; it does not implement a general `--help` option or a custom-agent selection flag.
+
+The console has no agent body or avatar. Hormones, mood notes, and life files exist only in `agent_gui.exe`; console requests are sent without a mood note or temperature change.
 
 ### Autonomous tasks
 
@@ -239,6 +263,7 @@ Defined in [`ChatAgent::RegisterTools()`](src/agent/ChatAgent.hpp) and the [`Aut
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
 | `write_file` | `path`, `content` | Create or replace a text file and create its parent folders. Relative paths resolve under `workspace_dir`. |
+| `delete_file` | `path` | Delete one file or an empty folder, always after user approval. Relative paths resolve under `workspace_dir`. |
 | `execute_code` | `language`, `code` | Execute Python, PowerShell, or CMD and return exit status, elapsed time, stdout, and stderr. |
 | `search_knowledge_base` | `query` | Retrieve source-labeled passages through the native RAG index. |
 | `search_internet` | `query` | Run the Python web search helper. |
@@ -332,6 +357,437 @@ python .\scripts\websearch.py --pages 3 --max-chars 6000 --budget 8 -- "C++ retr
 
 `websearch.py` uses the Python standard library. It tries configured sources in order, reads selected result pages within a time budget, and keeps snippets when page extraction fails. It does not render JavaScript or ingest PDFs from search results.
 
+## Agent body: hormones and life states
+
+Each agent tab in `agent_gui.exe` owns an `EndocrineSystem` ([`src/bio/EndocrineSystem.hpp`](src/bio/EndocrineSystem.hpp)): seven hormone levels on a 0–100 scale. Events during chat and autonomous work, called **feelings**, move the levels at once. Between events, the hormones act on one another and settle back toward their baselines. The levels are classified into a **life state**, which changes how the agent's next request is sent to the model and which animation its avatar plays.
+
+A tab's chat and its autonomous tasks share one body. The console executable creates no body.
+
+```mermaid
+flowchart LR
+    Work[Chat and tool outcomes] -->|Feel| Body[EndocrineSystem]
+    Frames[Window frames] -->|Live| Body
+    Body -->|Evaluate, held 30 s| State[Life state]
+    State -->|Mood: note and temperature| Request[Next model request]
+    State -->|Clip key| Avatar[Avatar animation]
+    Body -->|Every 30 s and after each turn| File[Life file]
+```
+
+### Hormones
+
+Defined in `kHormoneInfo` ([`src/bio/Hormones.hpp`](src/bio/Hormones.hpp)), in this order:
+
+| Hormone | Key | Newborn | Baseline | Settle rate per simulated hour | Settling half-life with the window open | Role |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| Cortisol | `cortisol` | 30 | 25 | 0.08 | About 8.7 min | Sustained stress. |
+| Adrenaline | `adrenaline` | 15 | 10 | 0.35 | About 2.0 min | Acute alarm; spikes and clears quickly. |
+| Melatonin | `melatonin` | 20 | 15 | 0.12 | About 5.8 min | Rest and sleep pressure; builds while idle. |
+| Serotonin | `serotonin` | 60 | 60 | 0.05 | About 13.9 min | Mood stability. |
+| Dopamine | `dopamine` | 55 | 50 | 0.15 | About 4.6 min | Motivation and reward. |
+| Insulin | `insulin` | 25 | 20 | 0.20 | About 3.5 min | Intake: rises with search results. |
+| Testosterone | `testosterone` | 60 | 60 | 0.03 | About 23.1 min | Vitality; slow to move, so it reflects longer trends. |
+
+Settling is exponential: over `h` simulated hours, a level closes `1 − e^(−rate × h)` of its distance to the baseline. The half-life column ignores hormone interactions. Levels are clamped to 0–100.
+
+### Simulated time
+
+| Constant in `EndocrineSystem` | Value | Effect |
+| --- | --- | --- |
+| `kSimHoursPerSecond` | 1/60 | One minute with the window open is one simulated hour, so a feeling fades over a few minutes of work. |
+| `kMaxStepHours` | 0.25 | Longer spans are integrated in steps of at most 15 simulated minutes. |
+| `kSleepyAfterSeconds` | 300 | After 5 minutes with no feeling and no work in progress... |
+| `kSleepPressure` | 8 | ...melatonin rises by 8 per simulated hour. |
+| `kStateHoldSeconds` | 30 | The levels must read a different state for 30 seconds before the agent enters it. |
+
+The hold prevents flicker: during a failing task, adrenaline crosses the Fight or flight threshold at each failure and drops between failures.
+
+Only time with the window open counts as lived. When a tab opens, the saved levels settle toward their baselines for the time since the last save. That rest has no interactions or sleep pressure, and it is not counted in any state.
+
+### Feelings
+
+`ChatAgent` and `AutonomousAgent` report feelings through `SetFeelingHandler`. Each feeling adds the deltas in `kFeelingInfo` immediately and is counted in the life file.
+
+| Feeling key | Reported when | Cort. | Adr. | Mel. | Ser. | Dop. | Ins. | Test. |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `asked` | A chat message is sent. | +2 | +3 | −15 | 0 | +3 | 0 | 0 |
+| `goal_given` | **Run task** starts. | +5 | +10 | −20 | 0 | +6 | 0 | 0 |
+| `found` | A knowledge-base or internet search succeeds. | −1 | 0 | 0 | +1 | +3 | +6 | 0 |
+| `did` | `write_file` or `delete_file` succeeds, or `execute_code` exits with 0 without timing out. | −2 | 0 | 0 | +1 | +6 | 0 | +1 |
+| `failed` | A tool reports an error, a nonzero exit code, or a timeout; a search fails; or a written Python file fails the syntax check. | +8 | +12 | 0 | −1 | −4 | 0 | 0 |
+| `refused` | The user declines code, a file write, or a deletion. | +6 | +8 | 0 | −3 | −4 | 0 | 0 |
+| `repeated` | A tool call repeats one already made in the conversation. | +4 | +2 | 0 | 0 | −5 | 0 | 0 |
+| `answered` | A chat message ends with a reply. | −3 | −2 | 0 | +3 | +4 | 0 | +0.5 |
+| `stuck` | A chat message runs out of tool rounds, or a task step produces nothing new. | +6 | +6 | 0 | −1 | −5 | 0 | −0.5 |
+| `stopped` | The user presses **Stop**. | +8 | +15 | 0 | −2 | −5 | 0 | 0 |
+| `no_reply` | The model returns no reply, for example because Ollama is down or the model is missing. | +15 | +25 | 0 | −4 | −6 | 0 | 0 |
+| `goal_done` | A task ends with `finish`. | −10 | −8 | 0 | +8 | +20 | 0 | +5 |
+| `goal_missed` | A task stalls or reaches the step limit. | +14 | +6 | 0 | −6 | −12 | 0 | −3 |
+
+The first message of a task is not reported as `asked`; the task reports `goal_given` instead.
+
+### Interactions
+
+Each simulation step computes these rates from a snapshot of the levels, so rule order does not matter. Rates are per simulated hour.
+
+| Condition | Effect per simulated hour | Meaning |
+| --- | --- | --- |
+| Cortisol > 60 | With `e = (cortisol − 60) × 0.15`: melatonin −1.5e, serotonin −0.8e, testosterone −0.6e, insulin +0.5e | Stress blocks rest, lowers mood, suppresses vitality, and raises blood sugar. |
+| Adrenaline > 50 | Cortisol + (adrenaline − 50) × 0.25 | Alarm becomes sustained stress. |
+| Serotonin > 65 | Melatonin + (serotonin − 65) × 0.10 | Serotonin is melatonin's precursor. |
+| Melatonin > 55 | Dopamine − (melatonin − 55) × 0.20; cortisol − (melatonin − 55) × 0.15 | Rest damps drive and stress. |
+| Dopamine > 70 and cortisol < 40 | Testosterone + 0.5 | Drive feeds vitality when stress is low. |
+| Insulin > 65 | Serotonin + 1.5; dopamine − 1.0 | Many searches in a row make the agent sluggish, like a heavy meal. |
+| Idle for more than 5 minutes | Melatonin + 8 | Sleep pressure. |
+
+### Life states and mood
+
+`Evaluate()` returns the first state whose condition matches, in this order:
+
+| Order | State | Key | Condition |
+| ---: | --- | --- | --- |
+| 1 | Chronic burnout | `chronic_burnout` | Cortisol > 70, dopamine < 35, testosterone < 35 |
+| 2 | Fight or flight | `fight_or_flight` | Adrenaline > 65, cortisol > 55 |
+| 3 | Deep rest | `deep_rest` | Melatonin > 65, cortisol < 30, adrenaline < 20 |
+| 4 | High motivation | `high_motivation` | Dopamine > 70, testosterone > 60, cortisol < 45 |
+| 5 | Lethargic | `lethargic` | Dopamine < 40, serotonin < 40, adrenaline < 25 |
+| 6 | Homeostasis | `homeostasis` | None of the above |
+
+Burnout is checked before Fight or flight so that prolonged failure, once it has depleted the slow-moving testosterone, turns from alarm into exhaustion. The state key also names the avatar's clip (`anims/<key>.anim`) and the life file's `seconds_<key>` entry.
+
+Each state has a **mood**, defined in `kLifeStateInfo`:
+
+| State | Note added to the message | Temperature |
+| --- | --- | --- |
+| Homeostasis | None | Model default |
+| Fight or flight | You are tense after recent trouble. Work carefully, one step at a time, and check each result before you go on. | 0.5 |
+| Chronic burnout | You are worn out after many failed attempts. Be plain and honest about what did not work, and do not repeat what already failed. | 0.4 |
+| Deep rest | You are rested and calm. Answer patiently and clearly. | 0.7 |
+| High motivation | You feel confident after recent successes. Answer with energy, and end with one useful next step for the user. | Model default |
+| Lethargic | You are low on energy. Answer simply and directly, without filler. | 0.6 |
+
+Before each chat message and each autonomous step, `ChatAgent::ApplyMood` reads the tab's current mood. If the state has a note, the user's message is sent as:
+
+```text
+[How you feel: <note> Let it show only in your tone and care; do not talk about it unless the user asks.]
+
+<the user's message, unchanged>
+```
+
+If the state has a temperature, it is sent as Ollama's `temperature` option. The activity log shows a `[Feeling: …]` line whenever a mood is applied. Homeostasis requests, and the autonomous runner's `finish`-only completion check, are sent unchanged.
+
+Design constraints recorded in the source:
+
+- **The note goes in the user message, not the system prompt.** Ollama reuses its processed prompt prefix only up to the first change, so a mood in the system prompt would force the whole conversation to be re-read whenever the mood changed.
+- **Temperatures only go down** from the model's default (0.8 unless its Modelfile sets another). Lower temperatures keep a small model's tool calls more reliable. Temperature is a sampling option, so changing it does not reload the model.
+- **Notes describe tone and never name tools**, because a small model tends to act on the words it reads.
+- The note is added after file-task and internet-request detection, so its words trigger neither.
+
+### Life file
+
+The GUI saves each agent's life to `data/life/<agent name>.txt` every 30 seconds, after each turn, and when a tab closes. Excerpt:
+
+```ini
+born = 1795455925
+saved = 1795547864
+cortisol = 11.918
+adrenaline = 8.870
+seconds_homeostasis = 5001.244
+seconds_fight_or_flight = 0.000
+count_asked = 8
+count_goal_done = 6
+```
+
+| Entry | Meaning |
+| --- | --- |
+| `born`, `saved` | Unix times of the agent's first window session and of this save. |
+| `<hormone key>` | Current level, 0–100. |
+| `seconds_<state key>` | Seconds lived in that state with the window open. Their sum is the agent's age. |
+| `count_<feeling key>` | Number of times that feeling has been reported. |
+
+- Missing, unknown, negative, or non-numeric entries are ignored, so files written by older or newer builds still load.
+- To give an agent a new life, close the window and delete its file. While a tab is open, the GUI rewrites the file every 30 seconds.
+- The file name comes from the agent name, so renaming an agent starts a new life. Deleting an agent in the GUI moves its life file to `config/backup/<timestamp>/life/`.
+- If saving fails, the activity log reports it once, and the agent continues in memory.
+- **The hormone, state, and feeling keys are persisted names.** Renaming one in code loses that value in every saved life.
+
+### Life panel
+
+The GUI shows the body in two places ([`src/gui/LifePanel.hpp`](src/gui/LifePanel.hpp)):
+
+- **Feeling:** on the line above the conversation, the state's name in its color. The tooltip explains the state and shows its note and temperature.
+- **Life of …:** a collapsible header, open by default, with three columns:
+  - **Hormones now:** one bar per hormone, with a mark at its baseline.
+  - **Share of its life in each state:** a percentage bar per state, the current state highlighted, and the total time lived with the window open.
+  - **Record:** birth date; messages answered of messages asked; tasks finished of tasks given; tool calls that worked; and counts of refusals, repeated calls, stops, and missing model replies.
+
+### Tuning with `endocrine_sim`
+
+```powershell
+.\bin\endocrine_sim.exe
+```
+
+The simulator needs no Ollama server or window and finishes in milliseconds. It:
+
+1. Replays the original prototype scenarios, with hormones changed directly and time in hours.
+2. Reports how many failures 15 seconds apart bring a newborn agent to Fight or flight.
+3. Simulates a paced session: good chats, a finished task, model outages, failing tasks, a long run of failures, and a long idle period. It prints the levels, state, and temperature after each phase, and each state change with its minute.
+4. Prints the share of time in each state and checks that the life-file format reads back unchanged. The exit code is `0` if it does and `1` otherwise.
+
+The constants are tuned so that four or five failures in a row bring Fight or flight, a few successes bring High motivation, a long run of failures brings Chronic burnout, and a long idle period brings Deep rest. After changing `kHormoneInfo`, `kFeelingInfo`, the interaction rules in `Step`, or the thresholds in `Evaluate`, rebuild and rerun the simulator.
+
+[`src/bio/EndocrineSystem.cpp`](src/bio/EndocrineSystem.cpp) is the original standalone prototype. `build.ps1` does not compile it; `endocrine_sim` replays its scenarios against the current implementation.
+
+## Avatars, animation, and 3D models
+
+Each agent tab draws a 3D avatar to the right of the conversation. An avatar is data only: a folder of plain-text files and a Wavefront `.obj` model. The window plays the clip named after the agent's current life state and blends into the next clip when the state changes. New models, rigs, and motion need no rebuild.
+
+### Avatar folder
+
+```text
+data/avatar/<agent name>/
+├── model.txt        required: the .obj, its axes, and material shine
+├── camera.txt       optional: framing
+├── lights.txt       optional: lights and background
+├── rig.txt          optional: bones that move the model's parts
+└── anims/
+    ├── homeostasis.anim
+    ├── fight_or_flight.anim
+    ├── chronic_burnout.anim
+    ├── deep_rest.anim
+    ├── high_motivation.anim
+    ├── lethargic.anim
+    └── default.anim   optional: for any state without its own clip
+```
+
+- The folder name is the agent's `agent_name`, made safe for a file name: the same name as its life file. A renamed agent looks for the folder of its new name.
+- An agent without a folder shows a message in the avatar square. Right-click > **Open the avatar folder** creates and opens it.
+- Only `model.txt` is required. Without `camera.txt`, the camera is fitted to the model; without `lights.txt`, the renderer's default lights apply; without `rig.txt`, the whole model is one bone named `root`.
+- [`data/avatar/README.txt`](data/avatar/README.txt) is the format reference, and each bundled file begins with comments explaining its keys.
+
+All avatar files share one syntax: `key = value` lines, whole-line `#` comments, keys in any case, and numbers with a decimal point regardless of the Windows locale. A UTF-8 byte order mark is accepted.
+
+**Live reload.** Once per second, the window compares the times and sizes of the avatar's text files, its `.obj`, every `.mtl` beside the `.obj`, and every `.anim`. When one changes, it rereads the avatar on a background thread and swaps it in when ready. An unchanged `.obj` is reused, so editing a clip does not reload a large model. Right-click > **Read the files again** forces a reload.
+
+**Warnings.** Lines that cannot be used are skipped, and their count appears as **N warning(s)** under the avatar; hover to read up to 25. A key placed in the wrong file names the file it belongs in. Only a missing `model.txt`, a missing `model` key, or an unreadable model leaves the square empty, with the reason shown in it.
+
+### Bundled avatar
+
+The default agent, `Sof_IA`, ships with its avatar in `data/avatar/Sof_IA/`. Use it as the template for new avatars.
+
+| Item | Value |
+| --- | --- |
+| Model | `Sofia.obj` with `Sofia.mtl`, about 3 MB |
+| Axes | Defaults: y up, front +z |
+| Rig | 14 bones: body, neck, head, mouth, jaw, brows, eyes, gaze, and lids, so facial parts move independently |
+| Materials | `model.txt` sets a `specular` line per material |
+| Clips | One for each of the six life states |
+
+### `model.txt`: the 3D model
+
+| Key | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `model` | Path to an `.obj` | Required | Relative to the application folder (the folder containing `bin/`, `config/`, and `data/`), or absolute. Unlike settings paths, it is **not** relative to `config/`. |
+| `model_up` | `x`, `y`, `z`, `-x`, `-y`, or `-z` | `y` | The file's up axis. |
+| `model_front` | Same as `model_up` | `z` | The axis the model's face points along. It must be perpendicular to `model_up`; otherwise both are ignored with a warning. |
+| `specular` | `<material> <strength> <shininess>` | The `.mtl` values, else 0.06 and 32 | A gray highlight strength (0–1) and sharpness (at least 1) for one `.mtl` material. Repeat for each material. |
+
+The loader converts the file into the avatar's axes: **+y up, +z front (toward the camera), +x the character's left**. Every other avatar file, including camera targets, bone pivots, and track moves, uses those converted axes in the model's own units. Scans and CAD exports are often z-up and face −y:
+
+```ini
+model       = data/avatar/MyAgent/scan.obj
+model_up    = z
+model_front = -y
+specular    = skin 0.10 24
+```
+
+**Supported `.obj` and `.mtl` subset** ([`src/renderer/Model.hpp`](src/renderer/Model.hpp)):
+
+| Read | Ignored |
+| --- | --- |
+| `v` positions; `f` faces of any size, triangulated as fans, with positive or negative indices | `vn` normals, `vt` texture coordinates, `s` smoothing groups |
+| `o` and `g` objects, which become parts; `usemtl`; `mtllib` | Textures, transparency, and every other `.mtl` key |
+| `.mtl`: `newmtl`, `Kd` diffuse (sRGB), `Ks` specular, `Ns` shininess | |
+
+Consequences for model authors:
+
+- **Parts are rigid.** A part is one `o`/`g` object, or one material within it. A bone moves whole parts; there is no skinning or vertex weighting. Split anything that should move separately into its own object.
+- **Normals are recomputed** smooth over each part, weighted by face area and welded across duplicate positions. Hard edges look rounded, and textured models show only their diffuse colors.
+- **Each part gets a side:** `L` when its center is left of the model's middle by more than 2% of the model's width, `R` on the other side, and otherwise `C`. Rig selectors use it.
+- A missing `.mtl`, or a material not found in it, renders gray (diffuse 0.8) with a warning.
+- Faces are drawn from both sides, so thin parts and inconsistent winding still render.
+
+### `camera.txt`
+
+| Key | Value | Default | Meaning |
+| --- | --- | --- | --- |
+| `target` | `x y z` or `auto` | `auto` | The point the camera looks at. `auto` is the center of the model's bounding box. |
+| `distance` | Units above 0, or `auto` | `auto` | Distance from the target. `auto` fits the model's full height with a 10% margin, plus the model's depth in front of the target. |
+| `height` | Units | `0.35` | Camera height above the target. |
+| `fov` | Degrees, clamped to 5–120 | `28` | Vertical field of view. |
+
+The camera looks along −z at the model's front. Near and far planes are computed from the model's size, so millimeter-scale scans and small models both render without depth artifacts. Because `height` is in model units, 0.35 is noticeable on Sofia (about 2 units tall) but negligible on a model hundreds of units tall. `avatar_render` prints the values that `auto` produces.
+
+### `lights.txt`
+
+Light colors are linear multiples of white; above 1 is brighter than white. Directions point from the model toward the light, in avatar axes, and need not be normalized. Background colors are sRGB, from 0 to 1. Every key is optional; the defaults form a soft studio setup on the window's purple.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `key_light` | `1.10 1.02 0.95` | Warm main light. It also drives the specular highlight. |
+| `key_light_dir` | `-0.45 0.55 0.70` | Upper left as seen from the camera, in front. |
+| `fill_light` | `0.28 0.30 0.38` | Cool fill. |
+| `fill_light_dir` | `0.75 0.10 0.50` | From the right as seen from the camera. |
+| `rim_light` | `0.40 0.34 0.55` | Outlines the edges that face it. |
+| `rim_light_dir` | `0.00 0.45 -1.00` | From behind and above. |
+| `ambient` | `0.26 0.24 0.30` | Light from everywhere, brighter from above. |
+| `background_top` | `0.17 0.13 0.24` | Top of the background gradient. |
+| `background_bottom` | `0.07 0.06 0.11` | Bottom of the background gradient. |
+
+Any of these keys may also appear in a clip to change the look of one state.
+
+Shading ([`RenderBackendDX11.hpp`](src/renderer/dx11/RenderBackendDX11.hpp)) is computed in linear color: wrapped diffuse from the key and fill lights, hemisphere ambient, a Blinn-Phong highlight from the key light using each material's specular color and shininess, and a rim term. Colors are converted with gamma 2.2.
+
+### `rig.txt`: bones
+
+```ini
+bone = <name> <parent, or - for none> <pivot x y z, or auto> : <part selectors>
+```
+
+- A bone turns and scales its parts about its **pivot** and carries its child bones with it.
+- A parent must be declared before its children. An unknown parent produces a warning, and the bone becomes a root.
+- `auto` places the pivot at the center of the bone's parts. A bone with no parts and an `auto` pivot gets `0 0 0`, with a warning.
+- A bone may hold no parts (nothing after the colon) and still carry child bones. Use this for joints, such as a neck, on a model made of one piece.
+
+Part selectors:
+
+| Selector | Matches |
+| --- | --- |
+| `Name` | Every part whose object name is `Name`. |
+| `Name.L`, `Name.R`, `Name.C` | The part named `Name` on the character's left, right, or middle. An object literally named `Name.L` in the file matches first. |
+| `Name#2` | The second object named `Name` in the file. |
+| `*` | Every part that no bone names, resolved after all named selectors. |
+
+A part belongs to the first bone that names it. Parts that no bone takes stay as modeled. A selector that matches nothing produces a warning.
+
+To list a model's parts by the names selectors use, right-click the avatar > **Model parts** (which includes **Copy the list**), or run `avatar_render --agent <name> --parts`. Both show each part's selector, material, triangle count, center, and current bone. Excerpt from Sof_IA's rig:
+
+```ini
+bone = head   neck   0 -0.62 -0.12    : Face Ear Earring Side_parted_hair Combed_strand
+bone = eye.L  head   0.29 0.075 0.62  : Eye.L
+bone = gaze.L eye.L  0.29 0.105 0.645 : Iris.L Pupil.L Glint.L
+bone = lid.L  eye.L  0.29 0.180 0.62  : Upper_lid.L
+```
+
+### Animation clips: `anims/<key>.anim`
+
+**Clip selection.** The avatar panel requests the clip whose key matches the agent's state key: the file name without `.anim`, in any case. If that file is missing, it uses `default.anim`; without either, the model holds its rest pose. Clips with other names, such as `talking.anim`, load and can be previewed but are not played automatically.
+
+| Key | Value | Meaning |
+| --- | --- | --- |
+| `blend` | Seconds, 0 or more; default `0.6` | Crossfade time *into* this clip. |
+| `key_light` … `background_bottom` | As in `lights.txt` | Lighting for this state. Unset keys come from `lights.txt`. Lights blend along with motion. |
+| `track` | `<bones> <channel> <curve>` | One animated channel. Repeat the key for each track. |
+
+**Bones.** A bone name from `rig.txt`, or a prefix ending in `*`: `eye*` moves `eye.L` and `eye.R` together. Tracks for bones that the rig does not have are skipped and summarized in one warning per file that lists the missing names.
+
+**Channels:**
+
+| Channel | Unit | Positive direction |
+| --- | --- | --- |
+| `rx` | Degrees | Nods down. |
+| `ry` | Degrees | Turns toward the character's left. |
+| `rz` | Degrees | Raises the character's left side, tilting the head toward its right shoulder. |
+| `tx`, `ty`, `tz` | Model units | Toward the character's left, up, and forward. |
+| `sx`, `sy`, `sz` | Factor; 1 is as modeled | Scale along one axis. |
+| `s` | Factor | Scale along all three axes. |
+
+**Curves:**
+
+| Curve | Behavior |
+| --- | --- |
+| `hold <value>` | A constant value. |
+| `wave <amplitude> <seconds> [phase] [center]` | A sine wave with one cycle per `seconds`. `phase` (0–1) shifts it within its cycle. `center` defaults to 0 for turns and moves, and 1 for scales. |
+| `keys <seconds> [vary <share>] <t> <v> <t> <v> …` | A loop of `seconds`, with values at non-decreasing times from 0 to `seconds`. Values ease in and out between keys and wrap from the last key to the first. `vary` (0–0.9) makes each loop up to that share longer or shorter at random, so blinks do not tick like a clock. Tracks with the same `seconds` and `vary` stay in step. |
+
+**Composition:**
+
+- Tracks on the same channel of the same bone add up; scale tracks add their differences from 1. Scales are clamped to at least 0.02, so stacked tracks cannot turn a part inside out.
+- A bone's children follow it: turning `head` turns the eyes, brows, and lips with it.
+- When the clip changes, the new clip fades in over its `blend` time while earlier clips fade out in proportion. Up to four clips can blend at once, and fading clips keep playing.
+
+Example: a breath every 4 seconds and a blink about every 4.5 seconds.
+
+```ini
+blend = 0.8
+track = body s  wave 0.006 4
+track = eye* sy keys 4.5 vary 0.3  0 1  4.05 1  4.2 0.1  4.35 1
+```
+
+Bundled clips:
+
+| State | `blend` | Motion | Lighting |
+| --- | ---: | --- | --- |
+| Homeostasis | 0.8 s | Calm breathing, an easy look around, a blink every few seconds. | From `lights.txt` |
+| Fight or flight | 0.35 s | Fast, shallow breathing; quick glances led by the eyes; wide eyes; raised, drawn brows; frequent blinks. | Hard, reddish |
+| Chronic burnout | 1.5 s | Head low and to one side, slow heavy breaths, heavy lids, sad brows, eyes down. | Cold, dim |
+| Deep rest | 2.0 s | Eyes almost closed, slow deep breaths, head tilted and drifting. | Moonlight |
+| High motivation | 0.6 s | Chin up, a lively sway, an occasional nod with raised brows, bright eyes, a wider mouth. | Warm, bright |
+| Lethargic | 1.2 s | Slow, small moves; droopy lids; head low and to one side; slow blinks. | Gray, flat |
+
+### Avatar panel
+
+The avatar square takes up to 40% of the tab width and is hidden when it would be too small to see. Hovering shows the model's part, face, and bone counts; the render backend and multisampling level; and which clip is playing. The caption under the square shows the state in its color, or **Preview: …** while previewing.
+
+Right-click menu:
+
+| Item | Action |
+| --- | --- |
+| **Preview** | Play any state's clip, or any other clip in `anims/`, instead of following the agent. **The agent's feeling** returns to following the life state. States without a clip are marked "(no file)". |
+| **Import animation for** | Choose an `.anim` file for a state or for `default`. The file is checked against the avatar's rig first, and a file with no playable tracks is rejected. The replaced clip moves to `config/backup/<timestamp>/avatar/<agent>/`, and the result appears over the avatar for 10 seconds. |
+| **Model parts** | The parts table described under [`rig.txt`](#rigtxt-bones), with **Copy the list**. |
+| **Open the avatar folder** | Create the folder if needed and open it in Explorer. |
+| **Read the files again** | Reload the avatar now. |
+| **Face it again** | Reset the rotation from dragging. |
+
+Each tab has its own animation state and render target, so tabs never share a half-blended pose. Only the visible tab renders.
+
+### Offline rendering with `avatar_render`
+
+```powershell
+.\bin\avatar_render.exe --agent Sof_IA --state fight_or_flight out.bmp
+.\bin\avatar_render.exe --agent Sof_IA --frames 8 --step 0.5 --size 256 sheet.bmp
+.\bin\avatar_render.exe --agent Sof_IA --parts
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--agent <name>` | The default agent's `agent_name` | Whose avatar folder to load. |
+| `--state <key>` | `homeostasis` | Clip key, with the same fallback as the window. |
+| `--time <seconds>` | `2` | Animation time before the first frame. |
+| `--size <pixels>` | `512` | Square frame size, from 16 to 4096. |
+| `--yaw <degrees>` | `0` | Turn the model. |
+| `--frames <n>`, `--step <seconds>` | `1`, `0.5` | Render 1–16 frames side by side, `step` seconds apart. |
+| `--parts` | | List the model's parts for `rig.txt` and exit. Needs no GPU. |
+
+The tool creates its own Direct3D 11 device (hardware, else WARP). It prints the renderer, load time, warnings, model statistics, the resolved camera with `auto` values marked, and the bones and clips, then writes a 24-bit `.bmp`. It exits with `1` on load or render errors and `2` on invalid arguments.
+
+### Add an avatar for a new agent
+
+1. Create the agent with **+** in the GUI, for example `Researcher`.
+2. Right-click its avatar square > **Open the avatar folder**. This creates `data/avatar/Researcher/`.
+3. Copy the `.obj` and its `.mtl` into that folder and create `model.txt`:
+
+   ```ini
+   model = data/avatar/Researcher/researcher.obj
+   ```
+
+4. If the model lies down or faces away, set `model_up` and `model_front`.
+5. The model first appears as a single `root` bone. Use **Model parts** to find part names, then write `rig.txt`. Anything that should move on its own must be a separate object in the `.obj`.
+6. Copy the clips from `data/avatar/Sof_IA/anims/` and adjust them. Tracks for missing bones are skipped with a warning, so reusing bone names such as `body`, `neck`, `head`, `eye.L`, and `eye.R` lets the bundled clips work.
+7. Adjust `camera.txt` and `lights.txt` if needed, and check the result in the window or with `avatar_render --agent Researcher`.
+
+The window rereads the folder within a second of each saved change.
+
 ## Configuration
 
 ### Configuration precedence
@@ -349,6 +805,8 @@ Paths supplied in settings files are relative to **`config/`**, including settin
 
 Manual file edits take effect after restarting. GUI Settings applies its supported fields to idle agents for the next message while retaining conversations. Endpoint, embedding-model name, directories, timeout, and tool-description changes require restarting.
 
+Life files (`data/life/`) and avatar folders (`data/avatar/`) are not part of this precedence. Their locations are fixed in code (`ChatAgentConfig::kLifeDir` and `kAvatarDir`), each is named after its agent, and avatar files are reread while the window is open. Paths inside avatar files, such as `model` in `model.txt`, are relative to the application folder, not to `config/`.
+
 ### Models and limits
 
 These are the **committed `settings.txt` values**, before any overrides:
@@ -356,7 +814,7 @@ These are the **committed `settings.txt` values**, before any overrides:
 | Key | Value | Meaning |
 | --- | --- | --- |
 | `agent_name` | `Sof_IA` | Default display name. |
-| `model` | `llama3.1:8b` | Chat model. Built-in/recovery default is `llama3.2`. |
+| `model` | `llama3.2` | Chat model. The built-in/recovery default is also `llama3.2`. |
 | `endpoint` | `http://127.0.0.1:11434/api/chat` | Ollama chat URL. Built-in/recovery default uses `127.0.0.1`. |
 | `embed_model` | `bge-m3` | Embedding model; leave empty for keyword-only retrieval. |
 | `embed_num_ctx` | `1024` | Embedding context window. |
@@ -386,9 +844,10 @@ The harness reserves `num_predict` from `num_ctx` for the reply. When its approx
 | `file_task_actions` | Comma-separated action words used to recognize file tasks. |
 | `file_task_objects` | Comma-separated file/object words used with action words. |
 | `search_words` | Words that keep search tools available even for a file task. |
+| `file_delete_actions` | Words that mark a request as a deletion: `write_file` then refuses to empty an existing file and points the model to `delete_file`. |
 | `internet_words` | Explicit internet triggers: `internet, online, wikipedia, google`. |
 | `words_before_web` | Words that make `web` an explicit search trigger: `the, on, na, da, pela`. |
-| `tool_write_file`, `tool_execute_code` | Descriptions supplied to the model for file/execution tools. |
+| `tool_write_file`, `tool_delete_file`, `tool_execute_code` | Descriptions supplied to the model for file/execution tools. |
 | `tool_search_knowledge_base`, `tool_search_internet` | Descriptions supplied to the model for retrieval tools. |
 | `tool_finish` | Autonomous completion tool description. |
 
@@ -433,11 +892,23 @@ flowchart TD
     Tools --> Files[File writing and code checks]
     Files --> Exec[CodeExecutor]
     Tools --> Web[Python web search]
+    GUI --> Body[EndocrineSystem]
+    Chat -. feelings .-> Body
+    Body -. mood .-> Chat
+    GUI --> Panel[AvatarPanel]
+    Body -. life state .-> Panel
+    Panel --> Avatar[Avatar and Animator]
+    Panel --> Render[RenderSystem]
+    Render --> DX11[RenderBackendDX11]
 ```
 
 A chat request enters `ChatAgent::Ask()`, which chooses tool visibility and initializes request state. `AgentHarness::ProcessPrompt()` sends messages and schemas to Ollama, dispatches returned tool calls sequentially, appends tool results, and asks the model to continue. It ends on a final reply, cancellation, a terminal tool, a failure, or the tool-round limit.
 
 `AutonomousAgent::Run()` drives successive calls to the same core using task-progress notes. The GUI runs blocking agent work on per-tab workers and transfers events to the UI thread through an inbox. CLI and GUI share the same agent implementation.
+
+In the GUI, each `AgentTab` owns its agent's `EndocrineSystem` under the session mutex. The worker thread reports feelings and reads the mood for each request; the UI thread advances the body every frame (`Live`), draws a copy, and passes the life state to the tab's `AvatarPanel`. Avatars are read on a worker thread without GPU calls, uploaded on the UI thread, posed by the `Animator`, and recorded by `RenderSystem`. `gui_main.cpp` submits the frame's avatar passes with `renderSystem.EndFrame()` before Dear ImGui draws, so each picture appears in the frame that rendered it.
+
+The renderer follows Doom 3's split between a front end and an API backend. `RenderSystem` records API-neutral commands into a `CommandList`, and `RenderBackend` is an interface shaped like Vulkan. Direct3D 11 is its only implementation, because the window and Dear ImGui already use it.
 
 ## Code reference
 
@@ -448,9 +919,11 @@ The links below point to implementation files. Public interfaces are listed sepa
 | File | Main symbols or commands | Responsibility |
 | --- | --- | --- |
 | [`src/cli/cli_main.cpp`](src/cli/cli_main.cpp) | `main`, `RunAutonomous`, `IndexKnowledgeBase`, `ConfirmAtConsole`, `OnCtrlC` | CLI dispatch, console streaming, confirmations, and clean-stop handling. |
-| [`src/gui/gui_main.cpp`](src/gui/gui_main.cpp) | `main` | Create `GuiHost` and `ChatWindow`, then run the render loop. |
+| [`src/gui/gui_main.cpp`](src/gui/gui_main.cpp) | `main` | Create `GuiHost` and `ChatWindow`, initialize `renderSystem` with the Direct3D 11 backend, and run the render loop, submitting avatar passes before Dear ImGui draws. |
 | [`src/tools/restore_config.cpp`](src/tools/restore_config.cpp) | `main`, `Restore`, `AskToGoOn` | Back up configuration and restore defaults. |
-| [`build.ps1`](build.ps1) | `-Clean` | Compile cached ImGui objects and build all three executables. |
+| [`src/tools/endocrine_sim.cpp`](src/tools/endocrine_sim.cpp) | `main`, `PrototypeScenarios`, `GoodChat`, `Task`, `Wait`, `ReadsBack` | Replay hormone scenarios and a paced session, and verify the life-file round trip. |
+| [`src/tools/avatar_render.cpp`](src/tools/avatar_render.cpp) | `main`, `WriteBMP` | Load an avatar and render frames offscreen to a `.bmp`, or list the model's parts. |
+| [`build.ps1`](build.ps1) | `-Clean` | Compile cached ImGui objects and build all five executables. |
 | [`run.ps1`](run.ps1) | `-KeepAlive` | Read effective default-agent model settings and warm up Ollama. |
 | [`package.ps1`](package.ps1) | `-NoData`, `-Zip` | Rebuild and assemble a relocatable distribution. |
 
@@ -497,7 +970,7 @@ The index stores source metadata, passage text, page bounds, embedding model, an
 | [`CLISecurityChecking.hpp` — `CLISecurityChecking`](src/execution/CLISecurityChecking.hpp) | `Check`, `Report`, `Finding`, `ConfirmHandler`; internal `RuleTable` | Pattern-based detection of risky commands, with severity, evidence, and line references. |
 | [`CodeExecutor.hpp` — `CodeExecutor`](src/execution/CodeExecutor.hpp) | `ExecuteCode`, `ExecuteCommand`, `Limits`, `ExecutionResult` | Temporary scripts, process creation, Job Objects, output capture, timeouts, and UTF-8 normalization. |
 | [`FileSystem.hpp` — `FileSystem`](src/framework/FileSystem.hpp) | `BasePath`, `RelativePathToOSPath`, global `fileSystem` | Resolve application resources independently of the shell's working directory. |
-| [`Sys.hpp`](src/sys/Sys.hpp) | `Sys_EXEPath`, `Sys_DefaultBasePath`, `Sys_FontsFolder`, `Sys_MachineName`, `Sys_OwnsConsole` | Windows executable/resource discovery, font path, machine identity, and console ownership. |
+| [`Sys.hpp`](src/sys/Sys.hpp) | `Sys_EXEPath`, `Sys_DefaultBasePath`, `Sys_FontsFolder`, `Sys_MachineName`, `Sys_OwnsConsole`, `Sys_OpenFolder`, `Sys_OpenFileDialog` | Windows executable/resource discovery, font path, machine identity, console ownership, and the Explorer and Open dialogs the avatar menu uses. |
 | [`CLIHelper.hpp` — `CLIHelper`](src/cli/CLIHelper.hpp) | `CaptureCLIInput`, `StdinIsConsole` | UTF-8 command-line input, piped input, and multiline continuation. |
 | [`Utils.hpp`](src/common/Utils.hpp) | `TextUtilities::print`, `Widen` | Flushed console output and UTF-8-to-UTF-16 conversion. |
 | [`MacroWrap.h`](src/common/MacroWrap.h) | `PRINT` | Compatibility macro forwarding to `TextUtilities::print`. |
@@ -510,10 +983,38 @@ The index stores source metadata, passage text, page bounds, embedding model, an
 | --- | --- | --- |
 | [`GuiHost.hpp` — `GuiHost`](src/gui/GuiHost.hpp) | `Create`, `Run`, `Window`; internal `WndProc`, `CreateDevice`, `LoadFont`, `Shutdown` | Native window, DPI scaling, Direct3D resources, fonts, render loop, and cleanup. |
 | [`ChatWindow.hpp` — `ChatWindow`](src/gui/ChatWindow.hpp) | `Draw`; internal `DrawTabs`, `DrawSettings`, `SaveSettings`, `CreateAgent`, `DeleteAgent`, `DrawConfirmation` | Tab management, settings persistence, model selection, and confirmation dialogs. |
-| [`AgentTab.hpp` — `AgentTab`](src/gui/AgentTab.hpp) | `Poll`, `DrawBody`, `NewConversation`, `ApplySettings`, `Answer` | Per-agent display and state. Internal `Send`, `RunTask`, `DrainInbox`, and `Session::Confirm` connect workers to the UI. |
+| [`AgentTab.hpp` — `AgentTab`](src/gui/AgentTab.hpp) | `Poll`, `DrawBody`, `NewConversation`, `ApplySettings`, `Answer` | Per-agent display and state, including the agent's body and avatar panel. Internal `Send`, `RunTask`, `DrainInbox`, and `Session::Confirm` connect workers to the UI; `Live` and `SaveLife` advance and save the body, and `Session::Feel` and `Session::CurrentMood` give the worker locked access to it. |
 | [`UiCommon.hpp` — `ui`](src/gui/UiCommon.hpp) | `SelectableText::Draw`, `Wrapped`, `Dim`, `Trim`, `ShortPath` | Shared presentation helpers and selectable wrapped text that copies original line breaks. |
 
 The vendored Dear ImGui version is **1.91.8**. This repository adds `ImGui::StyleColorsSofia`, declared in [`imgui.h`](third_party/imgui/imgui.h) and implemented in [`imgui_draw.cpp`](third_party/imgui/imgui_draw.cpp). Preserve that customization when upgrading ImGui. Win32 and DX11 backends and `misc/cpp/imgui_stdlib` are compiled by the build script.
+
+### Agent body
+
+| File / type | Main symbols | Responsibility |
+| --- | --- | --- |
+| [`Hormones.hpp` — `Hormone`, `HormoneType`](src/bio/Hormones.hpp) | `kHormoneInfo`, `Adjust`, `Set`, `Settle`, `EnumIndex` | Hormone table and exponential settling toward baselines. |
+| [`EndocrineSystem.hpp` — `LifeState`, `Feeling`, `Mood`](src/bio/EndocrineSystem.hpp) | `kLifeStateInfo`, `kFeelingInfo` | State names, keys, notes, and temperatures; hormone deltas for each feeling. |
+| [`EndocrineSystem.hpp` — `EndocrineSystem`](src/bio/EndocrineSystem.hpp) | `Feel`, `Live`, `Update`, `Rest`, `Evaluate`, `State`, `CurrentMood`, `Stimulate`, `ShareOf`, `Count`, `ToText`, `FromText`, `Save`, `Load` | Simulation, state hold, statistics, and the life file. Internal `Step` applies the interactions. Not thread-safe. |
+| [`LifePanel.hpp` — `ui`](src/gui/LifePanel.hpp) | `DrawFeeling`, `DrawLife`, `LifeStateColor`, `HormoneColor` | The feeling line and the life panel. |
+
+`ChatAgent::SetFeelingHandler`, `SetMoodSource`, and `Feel` connect the agent core to a body. Internal `ApplyMood` applies the mood, and `NoteAction`, `Fail`, and `Done` report tool outcomes. `AutonomousAgent` forwards both handlers and reports task-level feelings. `ChatAgentConfig::LifeFile`, `AvatarFolder`, `AvatarFolderOf`, and `AgentFileStem` derive per-agent paths, and `MoveToBackup` performs backups.
+
+### Avatars, animation, and rendering
+
+| File / type | Main symbols | Responsibility |
+| --- | --- | --- |
+| [`Avatar.hpp` — `Avatar`](src/anim/Avatar.hpp) | `Load`, `Signature`, `Clip`, `View`, `AnimsFolder` | Read an avatar folder, collect warnings, reuse an unchanged model, and select clips. Makes no GPU or UI calls. |
+| [`Avatar.hpp` — `AvatarCamera`](src/anim/Avatar.hpp) | `Setting`, `Fit`, `View` | `camera.txt`, automatic framing, and near and far planes. |
+| [`Animator.hpp` — `Rig`](src/anim/Animator.hpp) | `Build`, `Selector`, `PartBone`, `Find`, `Match` | Bone tree and part selectors. |
+| [`Animator.hpp` — `AnimClip`, `AnimTrack`](src/anim/Animator.hpp) | `Load`, `Evaluate` | Parse `.anim` files and evaluate curves. |
+| [`Animator.hpp` — `Animator`](src/anim/Animator.hpp) | `Play`, `Advance`, `Evaluate`, `Reset`, `Current` | Blend clip layers into one matrix per part, and blend their lights. |
+| [`Animator.hpp` — `animtext`](src/anim/Animator.hpp) | `ForEachSetting`, `Number`, `Vector`, `LightSetting` | The shared `key = value` grammar and light keys. |
+| [`Model.hpp` — `RenderModel`](src/renderer/Model.hpp) | `LoadOBJ`, `Parts`, `Materials`, `Mins`, `Maxs`, `Warnings`; also `ModelAxes`, `ModelPart`, `RenderMaterial`, `DrawVert` | `.obj` and `.mtl` loading, axis conversion, normals, part sides, and bounds. |
+| [`RenderSystem.hpp` — `RenderSystem`](src/renderer/RenderSystem.hpp) | Global `renderSystem`; `Init`, `UploadModel`, `FreeModel`, `EnsureTarget`, `RenderScene`, `EndFrame`, `ReadPixels`, `UITexture`, `TargetUV`; also `RenderLights`, `RenderView`, `RenderEntity` | Renderer front end: models, render targets sized in 64-pixel steps, and command recording. UI thread only. |
+| [`RenderBackend.hpp` — `RenderBackend`](src/renderer/RenderBackend.hpp) | `CommandList`, `RenderCommand`, `ViewConstants`, `DrawConstants`, `PipelineKind` | API-neutral, Vulkan-shaped backend interface. Comments map each operation to its Vulkan equivalent. |
+| [`RenderBackendDX11.hpp` — `RenderBackendDX11`](src/renderer/dx11/RenderBackendDX11.hpp) | `Init`, `Submit`, `CreateTarget`, `ReadPixels` | Direct3D 11 backend: 4× or 2× MSAA when supported, two-sided drawing, embedded HLSL compiled at startup, and linear-space lighting. |
+| [`RenderMath.hpp`](src/renderer/RenderMath.hpp) | `Vec3`, `Vec4`, `Mat4` | Right-handed vector and matrix math. |
+| [`AvatarPanel.hpp` — `AvatarSlot`, `AvatarLibrary`, `AvatarPanel`](src/gui/AvatarPanel.hpp) | `Poll`, `Reload`, `Slot`, `Sweep`, `Side`, `Draw`; internal `Import`, `DrawMenu`, `DrawParts` | Background loading and live reload, one GPU upload per folder, and the avatar square, menu, and import. |
 
 ### Python utilities
 
@@ -535,9 +1036,11 @@ The vendored Dear ImGui version is **1.91.8**. This repository adds `ImGui::Styl
 | `config/defaults/` | Factory prompt copies. |
 | `config/machines/` | Generated machine-specific overrides. |
 | `config/agents/` | Generated custom-agent definitions. |
-| `config/backup/` | Timestamped configuration/agent backups. |
+| `config/backup/` | Timestamped backups: configuration, deleted agents (`agents/`), their lives (`life/`), and replaced animations (`avatar/<agent>/`). |
 | `data/knowledge/` | Imported document JSON files. |
 | `data/rag/` | Persistent retrieval index. |
+| `data/life/` | One life file per agent, `<agent>.txt`, written by the GUI. |
+| `data/avatar/` | One avatar folder per agent, plus the format reference `README.txt`. |
 | `workspace/` | Default destination for generated files and execution working directory. |
 | `dist/agent/` | Distribution produced by `package.ps1`. |
 
@@ -584,6 +1087,9 @@ For changes shared by both front ends, add the registration to `ChatAgent::Regis
 - **Prompt behavior:** edit active prompt files; update factory copies only when intentionally changing recovery defaults.
 - **GUI behavior:** keep ImGui work on the UI thread and send worker results through `AgentTab::Session` events.
 - **Execution languages:** update the interpreter mapping in `CodeExecutor`, tool schema/descriptions, and security checks together.
+- **Hormones, feelings, and life states:** add the enum value at the end, before `Count`, and the matching row in `kHormoneInfo`, `kFeelingInfo`, or `kLifeStateInfo`. A new hormone also needs a column in every `kFeelingInfo` row and a bar color in `HormoneColor`. A new state needs a condition in `Evaluate`, a color in `LifeStateColor`, and a clip in each avatar (or a `default.anim`). Report a new feeling from `ChatAgent` or `AutonomousAgent` with `Feel`. Keys are persisted in life files, so do not rename existing ones. Retune with `endocrine_sim`.
+- **Avatars and motion:** add or change files under `data/avatar/<agent>/`; no rebuild is needed. See [Add an avatar for a new agent](#add-an-avatar-for-a-new-agent).
+- **Render backends:** implement `RenderBackend`, for example with Vulkan. `RenderSystem` and `CommandList` name no graphics API, and the interface comments give the Vulkan object or command for each operation. Keep rendering on the UI thread.
 
 ## Execution controls and data handling
 
@@ -611,6 +1117,8 @@ Data flow depends on configuration:
 - With a remote Ollama endpoint, inference data leaves the client computer. HTTP endpoints do not encrypt transport.
 - Document JSON and the binary index contain readable document text; the application does not encrypt them at rest.
 - Conversation caches are in memory. Successful repeated searches may be reused until eviction or **New chat**, so a repeated web query is not necessarily refreshed.
+- In the GUI, any life state other than Homeostasis adds a short note about the agent's simulated feeling to the user message sent to the endpoint.
+- Life files store hormone levels, time per state, and event counts in plain text. They contain no conversation text.
 
 ## Packaging and recovery
 
@@ -621,9 +1129,9 @@ Data flow depends on configuration:
 .\package.ps1 -NoData -Zip
 ```
 
-The script rebuilds the executables and recreates `dist/agent/`. It includes executables, shared configuration, factory prompts, custom-agent definitions, Python scripts, `run.ps1`, and a generated `README.txt`.
+The script rebuilds the executables and recreates `dist/agent/`. It includes the GUI, CLI, and recovery executables, shared configuration, factory prompts, custom-agent definitions, Python scripts, avatar folders, `run.ps1`, and a generated `README.txt`.
 
-By default it also includes the knowledge JSON and saved index. `-NoData` excludes those documents and the index. Machine settings, configuration backups, and workspace outputs are not copied. `-Zip` also writes `dist/agent.zip`.
+By default it also includes the knowledge JSON and saved index. `-NoData` excludes those documents and the index. `data/avatar/` is always copied, model files included, so large models enlarge the package; remove avatars you do not need before packaging. Machine settings, configuration backups, life files, workspace outputs, `endocrine_sim.exe`, and `avatar_render.exe` are not copied, so agents start new lives on the destination. `-Zip` also writes `dist/agent.zip`.
 
 The package requires Python and Ollama/models to be installed or reachable on the destination machine. Review the packaged shared endpoint because machine overrides are excluded. Copy the complete folder layout rather than only an executable.
 
@@ -641,9 +1149,9 @@ For a deliberate noninteractive reset:
 .\bin\restore_config.exe --yes
 ```
 
-The utility backs up files before replacing shared settings/prompts and removes the current machine's overrides. Backups are written to `config/backup/<timestamp>/`. It preserves custom agents, other machines' settings, and the knowledge base/index.
+The utility backs up files before replacing shared settings/prompts and removes the current machine's overrides. Backups are written to `config/backup/<timestamp>/`. It preserves custom agents, other machines' settings, the knowledge base/index, life files, and avatar folders.
 
-Recovery writes **built-in settings**, including `llama3.2` and the localhost endpoint, rather than restoring the repository's current `llama3.1:8b`/network-server configuration. Restart the application and verify the model and endpoint afterward.
+Recovery writes **built-in settings**, including `llama3.2` and the localhost endpoint, not the repository's committed `settings.txt`. Restart the application and verify the model and endpoint afterward.
 
 ## Troubleshooting
 
@@ -652,7 +1160,7 @@ Recovery writes **built-in settings**, including `llama3.2` and the localhost en
 | `g++` is not recognized | Add the MSYS2 UCRT64 `bin` directory to the PowerShell session's `PATH`. |
 | `nlohmann/json.hpp` is missing | Install the UCRT64 nlohmann-json package using the same compiler environment. |
 | Stale objects or link failures after a toolchain/header change | Run `build.ps1 -Clean`; incremental ImGui checks track source timestamps, not all header dependencies. |
-| Empty/invalid model response | Check the effective endpoint, server reachability, and installed model. The committed endpoint is not localhost. |
+| Empty/invalid model response | Check the effective endpoint, server reachability, and installed model. |
 | `run.ps1` starts local Ollama but keeps waiting | A configured remote endpoint remains unreachable; starting a local process cannot repair that server. |
 | Model does not support tools | Select a tool-capable model. The harness falls back to plain chat and disables tool execution for that model. |
 | Knowledge folder not found | Create `data/knowledge`, or correct `knowledge_dir` relative to `config/`. |
@@ -668,6 +1176,18 @@ Recovery writes **built-in settings**, including `llama3.2` and the localhost en
 | GUI cannot create its window | Check Direct3D availability; use the CLI to separate GUI problems from model problems. |
 | Web search fails | Inspect provider errors; automated searches may be blocked or change format. Check network, proxy, and certificate configuration. |
 | Multi-agent use is slow | Different models or context sizes can trigger reloads and compete for memory. Reduce concurrent work or adjust model/context choices. |
+| The avatar square says there is no avatar folder | Create `data/avatar/<agent name>/` with a `model.txt`, or right-click > **Open the avatar folder**. The folder name must match the agent name. |
+| The avatar square says "No renderer" | The Direct3D 11 renderer failed to start; chat still works. Check the graphics driver, or run `avatar_render` to see the error. |
+| The model lies face down or faces away | Set `model_up` and `model_front` in `model.txt`. |
+| The model is out of view or tiny | Set `target` and `distance` in `camera.txt` to `auto`, and run `avatar_render --agent <name>` to see the computed camera. |
+| The avatar does not move | Hover the square: there may be no clip for the state and no `default.anim`. Otherwise, check the warnings for bones that `rig.txt` lacks. |
+| Warnings appear under the avatar | Hover to read them. Clips copied from another avatar often warn about bones the rig lacks; those tracks are skipped by design. |
+| The model is entirely gray | Its `.mtl` is missing, or it lacks the material names the `.obj` uses. |
+| Hard edges look rounded, or textures are missing | Expected: normals are recomputed smooth, and textures are not supported. |
+| A large model takes long to appear | Large `.obj` files, such as scans of hundreds of megabytes, load on a background thread and are reused until the file changes. |
+| An imported animation was rejected | The file has no tracks that the avatar's rig can play. Rename its bones to match `rig.txt`. |
+| The agent seems stuck in a life state | A new state needs 30 seconds of consistent readings, and levels settle over minutes. To reset, close the window and delete `data/life/<agent>.txt`. |
+| A reply talks about the agent's feelings | The mood note asks the model not to, but small models may still do so. Homeostasis sends no note. |
 
 For a local-server connectivity check:
 
@@ -680,11 +1200,11 @@ Substitute the configured server address when using remote inference.
 
 ## Development and validation
 
-The repository uses PowerShell build scripts rather than CMake and currently has no checked-in automated test suite or CI workflow. Most application implementation is in headers, compiled through the GUI, CLI, and recovery entry points.
+The repository uses PowerShell build scripts rather than CMake and currently has no checked-in automated test suite or CI workflow. Most application implementation is in headers, compiled through the GUI, CLI, recovery, and tool entry points.
 
 A practical Windows smoke check after changes is:
 
-1. Run `build.ps1 -Clean` and confirm all three executables are produced.
+1. Run `build.ps1 -Clean` and confirm all five executables are produced.
 2. Launch the CLI and GUI against the intended Ollama server.
 3. Import a small PDF, run `--index`, and ask a question with a known answer and page.
 4. Ask for a harmless script, verify the saved file, and run it through the agent.
@@ -692,12 +1212,15 @@ A practical Windows smoke check after changes is:
 6. Run a short autonomous task and verify its reported result against the actual output.
 7. Create a custom agent, save settings, restart, and verify its definition reloads.
 8. Package with `-NoData -Zip` and check the distribution's folder layout and endpoint.
+9. Run `bin\endocrine_sim.exe` and confirm that it ends with `Life file: reads back unchanged` and exit code `0`.
+10. Run `bin\avatar_render.exe --agent Sof_IA --state fight_or_flight --frames 4 --step 0.5 sheet.bmp` and check the frames and printed warnings.
+11. With the GUI open, edit an `.anim` file, confirm the avatar changes within a second, and use **Preview** to check every state.
 
-**Documentation review:** this README was prepared from source revision [`0e30ad2`](https://github.com/JC4Job/Local-AI-Agent/tree/0e30ad23fc85b93b51613e65aaef2fff0d3551f6). Windows compilation, GUI execution, and end-to-end model behavior were not verified during that documentation review.
+**Documentation review:** this README was prepared from source revision [`0e30ad2`](https://github.com/JC4Job/Local-AI-Agent/tree/0e30ad23fc85b93b51613e65aaef2fff0d3551f6). Windows compilation, GUI execution, and end-to-end model behavior were not verified during that documentation review. The agent body, avatar, animation, and renderer sections, and the `delete_file` and model-setting updates, were added on 2026-11-24 from the working tree. They were checked against the source, but the programs were not built or run for that update.
 
 ## License and dependencies
 
-Created by **JC4Job — Júlio César Milani**. See the repository's [LICENSE](LICENSE), which contains MIT terms and the author's attribution request.
+Created by **JC4Job — Júlio César Moreira Milani**. See the repository's [LICENSE](LICENSE), which contains MIT terms and the author's attribution request.
 
 Dear ImGui has its own [MIT license notice](third_party/imgui/LICENSE.txt). Other tools, models, and dependencies retain their respective licenses.
 

@@ -17,6 +17,7 @@
 #include "agent/AutonomousAgent.hpp"
 #include "agent/ChatAgent.hpp"
 #include "bio/EndocrineSystem.hpp"
+#include "gui/AvatarPanel.hpp"
 #include "gui/LifePanel.hpp"
 #include "gui/UiCommon.hpp"
 
@@ -48,6 +49,9 @@
  *
  * WARNING: the body is the one thing both threads touch directly: it is under the session's mutex. The worker
  * feels and reads the mood there; the UI thread makes it live and draws a copy taken each frame (body_view_).
+ *
+ * Beside the conversation, the agent's avatar (data\avatar\<agent name>\) plays the animation of its life state
+ * (gui/AvatarPanel.hpp).
  */
 class AgentTab {
 public:
@@ -66,7 +70,8 @@ public:
      * `config`: ChatAgentConfig::Load(), of the default agent or of one made in the window. `id`: unique in the
      * window, for the tab's ImGui ID.
      */
-    AgentTab(ChatAgentConfig config, int id) : id_(id), session_(std::make_shared<Session>()) {
+    AgentTab(ChatAgentConfig config, int id)
+        : id_(id), session_(std::make_shared<Session>()), avatar_(config.AvatarFolder()) {
         Session* session = session_.get();  // the agents live inside the session, so this never dangles
         const ChatAgent::ActivityHandler on_activity = [session](const std::string& line) {
             session->Post(Event::Activity, line);
@@ -211,15 +216,25 @@ public:
     // Answers the question the worker waits on. Does nothing when it waits on none.
     void Answer(bool allow) { session_->Answer(allow); }
 
-    // Draws the tab's content: which agent it is, the conversation and the input. Inside the tab item.
+    /*
+     * Draws the tab's content: which agent it is, the conversation with the avatar at its right (left out when
+     * the window is too small for it), and the input. Inside the tab item.
+     */
     Action DrawBody() {
         const ImGuiStyle& style   = ImGui::GetStyle();
         const float       line    = ImGui::GetTextLineHeight();
         const float       input_h = line * 3.0f + style.FramePadding.y * 2.0f;
+        const float       below   = input_h + line + style.ItemSpacing.y * 2.0f;  // the input and its hint
 
         const Action action = DrawAbout();
         ui::DrawLife(body_view_, name_);
-        DrawHistory(-(input_h + line + style.ItemSpacing.y * 2.0f));
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const float  side  = ui::AvatarPanel::Side(avail.x, avail.y - below);
+        DrawHistory(-below, side > 0.0f ? -(side + style.ItemSpacing.x) : 0.0f);
+        if (side > 0.0f) {
+            ImGui::SameLine();
+            avatar_.Draw(side, body_view_.State());
+        }
         DrawInput(input_h);
         return action;
     }
@@ -344,6 +359,7 @@ private:
     Clock::time_point        life_saved_at_    = Clock::now();
     bool                     save_life_        = true;      // save at the next frame: a turn ended, or a newborn
     bool                     life_save_failed_ = false;     // reported once, not every half minute
+    ui::AvatarPanel          avatar_;                       // the avatar beside the conversation; see AvatarFolder
 
     /*
      * The longest time one frame lives. The window draws nothing while it is minimized, so the frame after
@@ -556,8 +572,9 @@ private:
         return action;
     }
 
-    void DrawHistory(float height) {
-        ImGui::BeginChild("##history", ImVec2(0.0f, height), ImGuiChildFlags_Borders);
+    // `width` and `height` as ImGui takes a child's size: 0 is all there is, below 0 all but that much.
+    void DrawHistory(float height, float width = 0.0f) {
+        ImGui::BeginChild("##history", ImVec2(width, height), ImGuiChildFlags_Borders);
 
         if (messages_.empty() && !busy_) {
             ui::Dim("Ask anything. " + name_ + " can search your knowledge base and the internet, and run code on "

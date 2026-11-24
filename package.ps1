@@ -4,7 +4,8 @@
 #   config\    settings.txt, the prompts (and their factory copies, defaults\) and the agents made in the window. Not machines\ (each computer saves
 #              its own with Settings) nor backup\.
 #   scripts\   the search scripts (Python)
-#   data\      the knowledge base and its index, unless -NoData
+#   data\      the knowledge base and its index, unless -NoData; always data\avatar\ (each agent's avatar folder)
+#   src\obj\   the avatar models, at the path each data\avatar\<agent name>\model.txt names them by
 #   run.ps1, README.txt
 # Last, it checks that no file in it holds this computer's user folder or user name.
 # Usage: .\package.ps1            build and package
@@ -38,6 +39,13 @@ if (-not $NoData) {
         New-Item -ItemType Directory -Force "$out\data\rag" | Out-Null
         Copy-Item data\rag\knowledge.idx "$out\data\rag"
     }
+}
+# The avatars are part of the window, not of the knowledge base: copied even with -NoData. Their models keep
+# their path relative to the folder, since each model.txt names them that way.
+if (Test-Path data\avatar) { Copy-Item data\avatar "$out\data\avatar" -Recurse }
+if (Test-Path src\obj) {
+    New-Item -ItemType Directory -Force "$out\src" | Out-Null
+    Copy-Item src\obj "$out\src\obj" -Recurse
 }
 Copy-Item run.ps1 $out
 
@@ -74,6 +82,10 @@ First run
 
 If the configuration breaks: bin\restore_config.exe writes the defaults back, and keeps a copy of what it
 replaces in config\backup\.
+
+The avatar beside each conversation plays the animation of the agent's state. Each agent's avatar is its own
+folder, data\avatar\<agent name>\: model.txt, camera.txt, lights.txt, rig.txt and anims\<state>.anim (the
+formats are in data\avatar\README.txt). Right-click the avatar to import an animation or list the model's parts.
 "@
 [IO.File]::WriteAllText("$out\README.txt", $readme.Replace("`r`n", "`n").Replace("`n", "`r`n"), (New-Object Text.UTF8Encoding $false))
 

@@ -149,6 +149,7 @@ struct ChatAgentConfig {
      * workspace: where write_file puts a file named without a full path, and the folder execute_code runs in,
      *            so the files a script makes with a relative path land there too, not next to the program.
      * life:      each agent's life (bio/EndocrineSystem.hpp), one file per agent; see LifeFile.
+     * avatar:    each agent's avatar (anim/Avatar.hpp), one folder per agent; see AvatarFolder.
      *
      * NOTE: writing a file anywhere outside the workspace asks the user first.
      */
@@ -157,6 +158,7 @@ struct ChatAgentConfig {
     static constexpr const char* kRagIndex     = "data\\rag\\knowledge.idx";
     static constexpr const char* kWorkspaceDir = "workspace";
     static constexpr const char* kLifeDir      = "data\\life";
+    static constexpr const char* kAvatarDir    = "data\\avatar";
 
     /*
      * File tasks: a message with a word from each of these two lists asks to create, save or run a file
@@ -460,11 +462,25 @@ struct ChatAgentConfig {
      * NOTE: by name, as the agents are told apart in the window: a renamed agent starts a new life.
      */
     std::filesystem::path LifeFile() const {
-        std::string stem = SafeFileName(agent_name);
-        if (stem.empty()) {
-            stem = "agent";
-        }
-        return fileSystem.RelativePathToOSPath(kLifeDir) / std::filesystem::u8path(stem + ".txt");
+        return fileSystem.RelativePathToOSPath(kLifeDir) / std::filesystem::u8path(AgentFileStem(agent_name) + ".txt");
+    }
+
+    /*
+     * Where this agent's avatar is kept (anim/Avatar.hpp): data\avatar\<agent name>\, with everything about it in
+     * its own file (model.txt, camera.txt, lights.txt, rig.txt) and its animations in anims\.
+     *
+     * NOTE: by name, like LifeFile: a renamed agent shows the avatar of its new name, if there is one.
+     */
+    std::filesystem::path AvatarFolder() const { return AvatarFolderOf(agent_name); }
+
+    static std::filesystem::path AvatarFolderOf(const std::string& agent_name) {
+        return fileSystem.RelativePathToOSPath(kAvatarDir) / std::filesystem::u8path(AgentFileStem(agent_name));
+    }
+
+    // An agent's name as its files are named: SafeFileName, or "agent" when nothing of it is left.
+    static std::string AgentFileStem(const std::string& agent_name) {
+        const std::string stem = SafeFileName(agent_name);
+        return stem.empty() ? std::string("agent") : stem;
     }
 
     /*

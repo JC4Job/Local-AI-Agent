@@ -121,6 +121,10 @@ public:
 
     HWND Window() const { return hwnd_; }
 
+    // The device and context the window draws with, for the renderer (gui_main.cpp). Null before Create.
+    ID3D11Device*        Device()  const { return device_; }
+    ID3D11DeviceContext* Context() const { return context_; }
+
 private:
     HWND                    hwnd_        = nullptr;
     WNDCLASSEXW             wc_{};

@@ -1,0 +1,26 @@
+# Chronic burnout: depleted. The head hangs low and to one side, slow heavy breaths, heavy lids, sad brows,
+# eyes down, slow blinks. A cold, dim light.
+# The format is in data\avatar\README.txt.
+blend = 1.5
+
+key_light         = 0.72 0.74 0.82
+fill_light        = 0.18 0.20 0.26
+rim_light         = 0.20 0.20 0.28
+ambient           = 0.22 0.22 0.26
+background_top    = 0.12 0.12 0.15
+background_bottom = 0.05 0.05 0.07
+
+track = body   ty  hold -0.03
+track = body   s   wave 0.008 6.0
+track = neck   rx  hold 4
+track = head   rx  hold 7
+track = head   rz  hold -3
+track = head   rx  wave 1.0 6.0 0.25
+track = head   ry  wave 2.0 17.0
+track = gaze*  ty  hold -0.014
+track = eye*   sy  hold 0.62
+track = eye*   sy  keys 6.0 vary 0.3  0 1  5.35 1  5.6 0.5  5.95 1
+track = brow*  ty  hold -0.008
+track = brow.L rz  hold -7
+track = brow.R rz  hold 7
+track = jaw    ty  hold 0.004

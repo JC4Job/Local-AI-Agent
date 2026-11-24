@@ -1,0 +1,26 @@
+# The bones of Sof_IA's avatar: what its animations (anims\) move. Without any, the whole model is one bone, root.
+#
+# bone = <name> <parent, or - for none> <pivot x y z, or auto> : <parts>
+#
+# A bone turns and scales its parts about its pivot, and the bones under it follow. A parent comes before its
+# children. Parts are the .obj's object names: Name.L / Name.R is the one on the character's own left (+x) or
+# right, Name#2 the second object of that name in the file, and * every part no bone takes. A part goes to the
+# first bone that names it; auto puts the pivot in the middle of the bone's parts. Right-click the avatar >
+# Model parts (or "avatar_render --agent Sof_IA --parts") lists the parts by these names.
+#
+# Format: one "key = value" per line. Lines starting with # are comments. Numbers use a decimal point.
+
+bone = body   -      0 -1.78 -0.06    : Lavender_top
+bone = neck   body   0 -1.25 -0.07    : Neck
+bone = head   neck   0 -0.62 -0.12    : Face Ear Earring Side_parted_hair Combed_strand
+bone = mouth  head   auto             : Lip#1
+bone = jaw    mouth  0 -0.40  0.55    : Lip#2
+bone = brow.L head   auto             : Brow.L
+bone = brow.R head   auto             : Brow.R
+# The eyes squash toward their lower edge, as an upper lid comes down: sy 0.1 is a blink. The lids follow them.
+bone = eye.L  head   0.29 0.075 0.62  : Eye.L
+bone = eye.R  head  -0.29 0.075 0.62  : Eye.R
+bone = gaze.L eye.L  0.29 0.105 0.645 : Iris.L Pupil.L Glint.L
+bone = gaze.R eye.R -0.29 0.105 0.645 : Iris.R Pupil.R Glint.R
+bone = lid.L  eye.L  0.29 0.180 0.62  : Upper_lid.L
+bone = lid.R  eye.R -0.29 0.180 0.62  : Upper_lid.R

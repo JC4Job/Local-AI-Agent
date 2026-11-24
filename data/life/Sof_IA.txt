@@ -1,0 +1,31 @@
+# The life of Sof_IA: its hormone levels, the seconds it spent in each life state
+# while its window was open, and how many times each feeling came. Written by agent_gui.exe as the
+# agent lives (src/bio/EndocrineSystem.hpp). Delete this file to give the agent a new life.
+born = 1795455925
+saved = 1795549439
+cortisol = 23.398
+adrenaline = 10.000
+melatonin = 15.046
+serotonin = 66.426
+dopamine = 50.587
+insulin = 20.034
+testosterone = 69.230
+seconds_homeostasis = 5007.443
+seconds_fight_or_flight = 0.000
+seconds_chronic_burnout = 0.000
+seconds_deep_rest = 1049.890
+seconds_high_motivation = 1356.725
+seconds_lethargic = 0.000
+count_asked = 8
+count_goal_given = 7
+count_found = 16
+count_did = 3
+count_failed = 3
+count_refused = 0
+count_repeated = 0
+count_answered = 8
+count_stuck = 0
+count_stopped = 1
+count_no_reply = 0
+count_goal_done = 6
+count_goal_missed = 0

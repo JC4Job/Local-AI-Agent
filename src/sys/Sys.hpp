@@ -7,6 +7,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <commdlg.h>   // GetOpenFileNameW (comdlg32), left out by WIN32_LEAN_AND_MEAN
+#include <shellapi.h>  // ShellExecuteW (shell32)
 
 #include <filesystem>
 #include <string>
@@ -71,6 +73,36 @@ inline std::string Sys_MachineName() {
  */
 inline bool Sys_ReplaceFile(const std::filesystem::path& from, const std::filesystem::path& to) {
     return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+}
+
+/*
+ * A file the user picks in Windows' Open dialog, over `owner`; empty when they cancel. `filter` is pairs of
+ * label and pattern, each ending in \0, the whole ending in another \0: L"Text\0*.txt\0All files\0*.*\0".
+ *
+ * NOTE: OFN_NOCHANGEDIR: the dialog would otherwise move the current directory to wherever the user browsed.
+ *
+ * WARNING: modal: the window's frames stop until the dialog closes. Needs comdlg32 at link time.
+ */
+inline std::filesystem::path Sys_OpenFileDialog(HWND owner, const wchar_t* title, const wchar_t* filter) {
+    wchar_t file[MAX_PATH * 4] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile   = file;
+    ofn.nMaxFile    = static_cast<DWORD>(sizeof(file) / sizeof(file[0]));
+    ofn.lpstrTitle  = title;
+    ofn.Flags       = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
+    if (!GetOpenFileNameW(&ofn)) {
+        return {};
+    }
+    return std::filesystem::path(file);
+}
+
+// Opens `folder` in Explorer. False when Windows cannot. Needs shell32 at link time.
+inline bool Sys_OpenFolder(const std::filesystem::path& folder) {
+    const HINSTANCE r = ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(r) > 32;
 }
 
 /*

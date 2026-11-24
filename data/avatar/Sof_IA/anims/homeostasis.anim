@@ -1,0 +1,12 @@
+# Homeostasis: balanced. Calm breathing, an easy look around, a blink every few seconds.
+# The format is in data\avatar\README.txt.
+blend = 0.8
+
+track = body  s   wave 0.005 4.5
+track = neck  rx  wave 0.5 4.5 0.25
+track = head  ry  wave 4.0 13.0
+track = head  rx  wave 1.5 8.0 0.3
+track = head  rz  wave 1.5 10.0 0.6
+track = gaze* tx  wave 0.010 9.0 0.1
+track = gaze* ty  wave 0.004 7.0
+track = eye*  sy  keys 4.5 vary 0.35  0 1  4.05 1  4.17 0.1  4.32 1

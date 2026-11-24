@@ -3,6 +3,7 @@
 #   bin/agent.exe      console front end (src/cli/cli_main.cpp)
 #   bin/restore_config.exe  writes the default config back when it is broken (src/tools/restore_config.cpp)
 #   bin/endocrine_sim.exe   plays the agent's hormones through scenarios, to tune them (src/tools/endocrine_sim.cpp)
+#   bin/avatar_render.exe   draws an agent's avatar (data\avatar\<agent>\) to a .bmp, or lists its model's parts (src/tools/avatar_render.cpp)
 # Usage: .\build.ps1          build both
 #        .\build.ps1 -Clean   recompile Dear ImGui too
 param([switch]$Clean)
@@ -36,7 +37,8 @@ $objects = foreach ($src in $imguiSources) {
 }
 
 Write-Host "linking bin/agent_gui.exe"
-& g++ @common -Wall src/gui/gui_main.cpp @objects -o bin/agent_gui.exe -mwindows @link -ld3d11 -ld3dcompiler -ldxgi -ldwmapi -lgdi32 -limm32
+# comdlg32 and shell32: the avatar's Import animation (Open dialog) and Open the avatar folder (src/sys/Sys.hpp).
+& g++ @common -Wall src/gui/gui_main.cpp @objects -o bin/agent_gui.exe -mwindows @link -ld3d11 -ld3dcompiler -ldxgi -ldwmapi -lgdi32 -limm32 -lcomdlg32 -lshell32
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "linking bin/agent.exe"
@@ -50,6 +52,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # A tool for tuning the agent's hormones without a model (src/bio/EndocrineSystem.hpp); not packaged.
 Write-Host "linking bin/endocrine_sim.exe"
 & g++ @common -Wall src/tools/endocrine_sim.cpp -o bin/endocrine_sim.exe -static
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# A tool for the avatar's files (src/anim/, src/renderer/) without the window; not packaged.
+Write-Host "linking bin/avatar_render.exe"
+& g++ @common -Wall src/tools/avatar_render.cpp -o bin/avatar_render.exe -static -ld3d11 -ld3dcompiler -ldxgi
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "done"

@@ -1,0 +1,20 @@
+# Deep rest: recovering. Eyes all but closed, slow deep breaths, the head tilted and drifting. Moonlight.
+# The format is in data\avatar\README.txt.
+blend = 2.0
+
+key_light         = 0.55 0.65 0.95
+fill_light        = 0.12 0.16 0.30
+rim_light         = 0.35 0.45 0.80
+ambient           = 0.16 0.18 0.28
+background_top    = 0.07 0.09 0.20
+background_bottom = 0.02 0.03 0.08
+
+track = body   s   wave 0.012 7.0
+track = neck   rx  hold 3
+track = head   rx  hold 6
+track = head   rz  hold 7
+track = head   rx  wave 1.5 7.0 0.25
+track = head   rz  wave 1.0 13.0
+track = eye*   sy  hold 0.14
+track = gaze*  ty  hold -0.01
+track = brow*  ty  hold -0.006

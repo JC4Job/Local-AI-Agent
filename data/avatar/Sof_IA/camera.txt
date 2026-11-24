@@ -1,0 +1,20 @@
+# How the camera sees Sof_IA's avatar (AvatarCamera, src/anim/Avatar.hpp). Every key is optional.
+#
+#   target   = <x y z> | auto   the point it looks at; auto: the middle of the model
+#   distance = <units> | auto   how far the camera is from the target; auto: the model's whole height in view
+#   height   = <units>          how far above the target the camera is
+#   fov      = <degrees>        the vertical field of view, 5 to 120
+#
+# In model units, in the avatar's axes: +y up, the model faces +z, +x is the character's left. The camera looks
+# at the model's front. "avatar_render --agent Sof_IA" prints what auto worked out.
+#
+# Format: one "key = value" per line. Lines starting with # are comments. Numbers use a decimal point.
+
+target   = auto
+distance = auto
+height   = 0.35
+fov      = 28
+
+# The values avatar_Sofia.txt had (2026-11-23): they look at y -5.32, below Sofia.obj (her face is at y 0), so
+# she was out of view. Auto works out target 0 -0.35 0.09 and distance 7.19.
+#   target = 0 -5.32 0, distance = 10.6, height = 5.45

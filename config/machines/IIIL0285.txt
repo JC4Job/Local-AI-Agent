@@ -1,0 +1,14 @@
+# Settings for this computer (IIIL0285), written by the Settings window of agent_gui.exe.
+# A key here takes the place of the same key in ..\settings.txt; a key left out comes from there, or
+# from the defaults built into the program. Same format as settings.txt, and relative paths are
+# relative to the config folder too. An agent's own file (..\agents\) takes the place of both for
+# that agent. It can be edited by hand.
+
+model = llama3.2
+num_ctx = 16384
+num_predict = 4096
+max_tool_rounds = 15
+autonomous_max_steps = 10
+kb_max_passages = 1
+kb_max_result_chars = 4000
+embed_num_ctx = 1024

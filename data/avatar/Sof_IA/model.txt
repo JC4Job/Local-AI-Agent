@@ -1,0 +1,25 @@
+# The model of Sof_IA's avatar: the .obj to show, which of its axes are up and front, and how its materials
+# shine. The rest of this folder: camera.txt (how the camera sees it), lights.txt (its lights), rig.txt (the
+# bones that move it) and anims\ (one animation per life state). ..\README.txt tells every format.
+# The window reads this folder again within a second of a change, so you can edit it with the window open.
+#
+# Format: one "key = value" per line. Lines starting with # are comments. Numbers use a decimal point.
+
+# A Wavefront .obj, relative to the program's folder (or a full path). Its .mtl gives the colors (Kd, Ks, Ns).
+# Its objects ("o" lines) are the parts the bones of rig.txt move; normals are worked out smooth, per part.
+model = data/avatar/Sof_IA/Sofia.obj
+
+# Which of the file's axes is up, and which one its front faces: x, y, z, -x, -y or -z. Left out: y and z, the
+# avatar's own. Scans and CAD exports are often z up and front -y; drawn as they are, they lie face down.
+# Sofia.obj is already y up, front z: nothing to set.
+
+# A shine for a material of the .mtl: specular = <material> <strength 0 to 1> <shininess, sharper when higher>.
+specular = skin   0.10 24
+specular = lips   0.25 40
+# The iris and pupil are flat discs: a strong shine lights them whole. The Glint parts are the eyes' catchlight.
+specular = white  0.25 90
+specular = iris   0.08 60
+specular = black  0.08 60
+specular = stud   0.80 60
+specular = hair   0.22 18
+specular = strand 0.22 18

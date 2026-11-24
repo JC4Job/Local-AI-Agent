@@ -1,0 +1,22 @@
+# Lethargic: low energy. Slow, small moves, droopy lids, the head low and to one side, slow blinks. A gray,
+# flat light.
+# The format is in data\avatar\README.txt.
+blend = 1.2
+
+key_light         = 0.80 0.78 0.78
+fill_light        = 0.22 0.22 0.24
+rim_light         = 0.16 0.16 0.18
+ambient           = 0.26 0.25 0.26
+background_top    = 0.14 0.13 0.15
+background_bottom = 0.06 0.06 0.07
+
+track = body   s   wave 0.005 5.5
+track = head   rx  hold 5
+track = head   rz  hold 4
+track = head   ry  wave 3.0 15.0
+track = head   rx  wave 0.8 5.5 0.25
+track = gaze*  ty  hold -0.008
+track = gaze*  tx  wave 0.008 12.0
+track = eye*   sy  hold 0.72
+track = eye*   sy  keys 5.5 vary 0.35  0 1  4.9 1  5.15 0.45  5.45 1
+track = brow*  ty  hold -0.005
